@@ -1,0 +1,146 @@
+contract: v2
+name: applyzer
+version: 0.2.0
+description: "Takes the jobs you chose and, for each, tailors your resume and cover letter from your own facts, finds someone to write to, and sends only when you approve. Then it tracks replies and drafts follow-ups in your Gmail."
+
+kind: interactive
+
+runtime:
+  framework: langgraph
+  python: "3.12"
+  entrypoint: src/agent.py:graph
+  timeout_seconds: 900
+
+dependencies:
+  lockfile: requirements.lock
+
+inputs:
+  - name: jobs
+    type: textarea
+    label: "The jobs to apply for, one per line: a link to the posting, or Company | Role | link | hr@company.com"
+    required: true
+  - name: resume_file
+    type: file
+    label: "Your resume (PDF, Word or text)"
+    accept: [pdf, docx, txt]
+  - name: resume_text
+    type: textarea
+    label: "Or paste your resume here"
+  - name: github_username
+    type: text
+    label: "Your GitHub username, so your projects can be matched to each job (optional)"
+  - name: notice_days
+    type: number
+    label: "Notice period, in days"
+  - name: current_ctc
+    type: text
+    label: "Current pay (optional; used only when a posting or recruiter asks)"
+  - name: expected_ctc
+    type: text
+    label: "Expected pay (optional; used only when a posting or recruiter asks)"
+  - name: work_auth
+    type: static-dropdown
+    label: "Can you work where these jobs are?"
+    options: ["can work there", "needs sponsorship", "not sure"]
+    default: "can work there"
+  - name: relocate
+    type: static-dropdown
+    label: "Would you relocate?"
+    options: ["yes", "no", "remote only"]
+  - name: links
+    type: text
+    label: "Links to share: LinkedIn, portfolio (optional)"
+
+choose_one:
+  - label: "Your resume"
+    inputs: [resume_file, resume_text]
+
+models:
+  tier: standard
+
+sources:
+  mail:
+    capability: message.search
+    label: "Your email, where companies answer your applications"
+    same_as: send
+  page:
+    capability: web_page.get
+    default_app: exa
+    label: "What reads job postings and company pages"
+
+writes:
+  send:
+    capability: message.send
+    default_app: gmail
+    label: "The email account your applications go from"
+  draft:
+    capability: message.create
+    label: "Drafts, in the same account"
+    same_as: send
+  tracker:
+    capability: row.upsert
+    default_app: googlesheets
+    label: "A Google Sheet to keep every application in, one row each (optional)"
+    required: false
+
+approvals:
+  required_for: [message.send]
+
+triggers:
+  manual: true
+  email: { query: "in:inbox is:unread -category:promotions", consumer_can_change: true }
+
+actions:
+  - name: prepare
+    label: "Prepare applications"
+    default: true
+  - name: paste_posting
+    label: "Paste the posting"
+    requires: [prepare]
+    per_row: true
+    inputs:
+      - name: text
+        type: textarea
+        label: "The posting's text, for a page I couldn't read"
+  - name: send_email
+    label: "Send"
+    requires: [prepare]
+    per_row: true
+  - name: mark_applied
+    label: "I applied"
+    requires: [prepare]
+    per_row: true
+    inputs:
+      - name: applied_on
+        type: date
+        label: "When did you apply? Leave it for today."
+  - name: not_applying
+    label: "Not applying"
+    requires: [prepare]
+    per_row: true
+  - name: check_replies
+    label: "Check replies"
+    requires: [prepare]
+  - name: follow_ups
+    label: "Follow-ups"
+    requires: [prepare]
+    schedule: { cron: "0 9 * * *", consumer_can_change: true }
+  - name: report
+    label: "Weekly report"
+    requires: [prepare]
+    schedule: { cron: "0 9 * * 1", consumer_can_change: true }
+
+offer_as: buttons
+
+memory:
+  notebook_kb: 64
+  notebook_per: user
+  collections:
+    jobs: { per: user, keep_days: 365, max_items: 5000, max_item_kb: 32 }
+    projects: { per: user, keep_days: 365, max_items: 200, max_item_kb: 8 }
+    applications: { per: user, keep_days: 365, max_items: 5000, max_item_kb: 64 }
+    declined: { per: user, keep_days: 365, max_items: 5000, max_item_kb: 1 }
+    suppressed: { per: user, keep_days: 730, max_items: 5000, max_item_kb: 1 }
+
+resources:
+  memory_mb: 1024

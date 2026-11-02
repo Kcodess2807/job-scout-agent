@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#f4f5f1">
+<title>applyzer</title>
+<link rel="icon" href="data:,">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,300..800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --paper: #f4f5f1; --card: #ffffff; --ink: #17201c; --ink-2: #4f5953; --ink-3: #66706a; --line: #dde1da; --line-2: #ecefe9;
+    --blue: #2140c8; --blue-tint: #e8ecff; --green: #1d7a4f; --green-tint: #e2f2e8; --amber: #a86400; --amber-tint: #fff0d6;
+    --red: #b3261e; --red-tint: #fde8e6;
+    --ease-out: cubic-bezier(0.23, 1, 0.32, 1); --ease-drawer: cubic-bezier(0.32, 0.72, 0, 1);
+    --font: "Bricolage Grotesque", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+    --nav: 64px;
+  }
+  * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; background: var(--paper); }
+  body { margin: 0; color: var(--ink); background: var(--paper); font: 400 16px/1.45 var(--font); font-optical-sizing: auto;
+         padding-bottom: calc(var(--nav) + env(safe-area-inset-bottom)); }
+  main { max-width: 680px; margin: 0 auto; padding: 0 18px; }
+  h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -0.01em; line-height: 1.15; }
+  h1 { font-size: 25px; } h2 { font-size: 20px; } h3 { font-size: 16px; }
+  p { margin: 0; }
+  .muted { color: var(--ink-2); } .small { font-size: 14px; } .tiny { font-size: 13px; }
+  button, .btn, select, input, textarea { font: inherit; color: inherit; }
+  button, .btn { background: var(--card); border: 1px solid var(--line); border-radius: 12px; min-height: 44px; padding: 10px 16px;
+                 cursor: pointer; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; white-space: nowrap;
+                 font-weight: 500; transition: transform 160ms var(--ease-out), background-color 160ms ease, border-color 160ms ease; }
+  button:active, .btn:active { transform: scale(0.97); }
+  button[disabled] { opacity: 0.45; cursor: not-allowed; }
+  button.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+  button.quiet { background: transparent; border-color: transparent; color: var(--ink-2); padding-inline: 10px; }
+  button.danger { color: var(--red); }
+  :focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+  @media (hover: hover) and (pointer: fine) {
+    button:not([disabled]):not(.primary):hover, .btn:hover { background: var(--line-2); }
+    button.primary:not([disabled]):hover { background: #1a35a8; }
+  }
+
+  /* ── top ───────────────────────────────────────────────────────────────── */
+  .top { display: flex; align-items: baseline; gap: 12px; padding: 18px 0 6px; }
+  .wordmark { font-weight: 700; font-size: 22px; letter-spacing: -0.02em; }
+  .meta { margin-left: auto; color: var(--ink-3); font-size: 13px; display: flex; gap: 10px; }
+  .lede { font-size: 15px; color: var(--ink-2); max-width: 44ch; margin-bottom: 14px; }
+
+  /* ── tabs (panels) ─────────────────────────────────────────────────────── */
+  .panel { display: none; } .panel.on { display: block; }
+  nav.tabs { position: fixed; left: 0; right: 0; bottom: 0; height: calc(var(--nav) + env(safe-area-inset-bottom));
+             padding-bottom: env(safe-area-inset-bottom); background: color-mix(in srgb, var(--card) 92%, transparent);
+             backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); border-top: 1px solid var(--line); z-index: 10; }
+  nav.tabs .in { max-width: 680px; margin: 0 auto; height: var(--nav); display: grid; grid-template-columns: repeat(4, 1fr); }
+  nav.tabs button { border: 0; border-radius: 0; background: transparent; min-height: 0; height: 100%; flex-direction: column; gap: 3px;
+                    font-size: 12px; font-weight: 500; color: var(--ink-3); padding: 8px 4px; }
+  nav.tabs button svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+  nav.tabs button[aria-selected="true"] { color: var(--blue); }
+  nav.tabs button .dot { position: absolute; margin-left: 26px; margin-top: -2px; width: 8px; height: 8px; border-radius: 50%; background: var(--amber); display: none; }
+  nav.tabs button.badged .dot { display: block; }
+
+  /* ── live: the orchestrator and its trace ──────────────────────────────── */
+  .orch { display: flex; align-items: center; gap: 14px; padding: 14px 16px; background: var(--card); border: 1px solid var(--line);
+          border-radius: 18px; position: sticky; top: 8px; z-index: 5; box-shadow: 0 6px 24px rgb(23 32 28 / 0.06); }
+  .orch .core { width: 44px; height: 44px; border-radius: 50%; background: var(--blue); color: #fff; display: grid; place-items: center;
+                flex: none; position: relative; }
+  .orch .core svg { width: 22px; height: 22px; stroke: #fff; fill: none; stroke-width: 1.8; stroke-linecap: round; }
+  .orch .core::after { content: ""; position: absolute; inset: -5px; border-radius: 50%; border: 2px solid var(--blue); opacity: 0; }
+  .orch.busy .core::after { animation: ring 1.4s ease-out infinite; }
+  .orch .who { font-weight: 600; } .orch .what { color: var(--ink-2); font-size: 14px; min-height: 1.3em; display: -webkit-box;
+               -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .orch > div:nth-child(2) { min-width: 0; }
+  .orch .run { margin-left: auto; }
+  @keyframes ring { from { transform: scale(0.9); opacity: 0.8; } to { transform: scale(1.5); opacity: 0; } }
+
+  .spine { position: relative; margin: 6px 0 0 37px; padding: 10px 0 4px 26px; border-left: 2px solid var(--line); min-height: 120px; }
+  .spine .pulse { position: absolute; left: -7px; top: 0; width: 12px; height: 12px; border-radius: 50%; background: var(--blue);
+                  box-shadow: 0 0 0 4px var(--blue-tint); opacity: 0; pointer-events: none; }
+  .stage { position: relative; padding: 8px 0 6px; }
+  .stage::before { content: ""; position: absolute; left: -33px; top: 14px; width: 12px; height: 12px; border-radius: 50%;
+                   background: var(--paper); border: 2px solid var(--line); transition: background-color 200ms ease, border-color 200ms ease; }
+  .stage.on::before, .stage.done::before { border-color: var(--blue); } .stage.done::before { background: var(--blue); }
+  .stage .name { font-weight: 600; font-size: 15px; color: var(--ink-3); transition: color 200ms ease; }
+  .stage.on .name, .stage.done .name { color: var(--ink); }
+  .stage .cast { font-size: 13px; color: var(--ink-3); margin-top: 1px; }
+  .rows { margin: 6px 0 2px; display: flex; flex-direction: column; gap: 6px; }
+  .row { display: grid; grid-template-columns: 24px 1fr auto; gap: 10px; align-items: start; padding: 9px 12px; border-radius: 12px;
+         background: var(--card); border: 1px solid var(--line-2); transition: border-color 200ms ease, background-color 200ms ease,
+         opacity 220ms var(--ease-out), transform 220ms var(--ease-out); }
+  @starting-style { .row { opacity: 0; transform: translateY(6px); } }
+  .row.on { border-color: var(--blue); background: var(--blue-tint); }
+  .row.code { border-left: 3px solid var(--green); }
+  .row.you { border-color: var(--amber); background: var(--amber-tint); }
+  .row .ic { width: 24px; height: 24px; border-radius: 8px; display: grid; place-items: center; background: var(--line-2); color: var(--ink-2); }
+  .row.on .ic { background: var(--blue); color: #fff; } .row.code .ic { background: var(--green-tint); color: var(--green); }
+  .row.you .ic { background: var(--amber); color: #fff; }
+  .row .ic svg { width: 14px; height: 14px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .row .t { font-weight: 600; font-size: 15px; line-height: 1.25; } .row .d { font-size: 13.5px; color: var(--ink-2); line-height: 1.35; margin-top: 1px; overflow-wrap: anywhere; }
+  .row > div:nth-child(2) { min-width: 0; }
+  .row .n { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; padding-top: 3px; }
+  .row .spin { width: 14px; height: 14px; border: 2px solid var(--blue-tint); border-top-color: var(--blue); border-radius: 50%; animation: spin 700ms linear infinite; margin-top: 4px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .outcome { margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); font-size: 15px; }
+  .outcome.needs { background: var(--amber-tint); border-color: color-mix(in srgb, var(--amber) 35%, var(--line)); }
+  .outcome ul { margin: 6px 0 0; padding-left: 18px; } .outcome li { margin: 4px 0; font-size: 14.5px; }
+  .runbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 6px; }
+  .runbar button { padding: 8px 14px; font-size: 14.5px; }
+  .clockrow { display: flex; gap: 8px; align-items: center; color: var(--ink-3); font-size: 13.5px; margin-top: 4px; }
+  .clockrow button { min-height: 36px; padding: 4px 12px; font-size: 13px; }
+  .skip { margin-left: auto; }
+
+  /* ── jobs ──────────────────────────────────────────────────────────────── */
+  .job { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 14px 16px; margin-bottom: 10px; }
+  .job .head { display: flex; align-items: baseline; gap: 8px; }
+  .job .co { font-weight: 600; font-size: 17px; } .job .role { color: var(--ink-2); font-size: 15px; }
+  .job .idx { color: var(--ink-3); font-size: 13px; font-variant-numeric: tabular-nums; margin-left: auto; }
+  .pill { display: inline-block; font-size: 13px; font-weight: 600; border-radius: 999px; padding: 3px 10px; margin-top: 6px; }
+  .p-blue { background: var(--blue-tint); color: var(--blue); } .p-green { background: var(--green-tint); color: var(--green); }
+  .p-amber { background: var(--amber-tint); color: var(--amber); } .p-grey { background: var(--line-2); color: var(--ink-2); }
+  .job .line { font-size: 14.5px; color: var(--ink-2); margin-top: 8px; overflow-wrap: anywhere; } .job .line b { color: var(--ink); font-weight: 500; }
+  .job .update { margin-top: 8px; padding: 8px 10px; border-radius: 10px; background: var(--line-2); font-size: 14px; }
+  .job .acts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+  .job .acts button, .job .acts .btn, .job .acts select { padding: 8px 13px; font-size: 14.5px; }
+  details { margin-top: 10px; } summary { cursor: pointer; color: var(--blue); font-size: 14.5px; font-weight: 500; list-style: none; min-height: 32px; display: flex; align-items: center; }
+  summary::-webkit-details-marker { display: none; }
+  summary::before { content: ""; width: 7px; height: 7px; border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+                    transform: rotate(-45deg); margin-right: 10px; transition: transform 160ms var(--ease-out); }
+  details[open] summary::before { transform: rotate(45deg); }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 14.5px/1.5 var(--font); background: var(--paper); border: 1px solid var(--line);
+        border-radius: 12px; padding: 12px; margin: 6px 0 0; }
+  select { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 8px 12px; min-height: 40px; }
+  .paste { margin-top: 10px; }
+  textarea, input { width: 100%; background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; font-size: 16px; }
+  textarea { min-height: 120px; resize: vertical; }
+  label { display: block; font-size: 14px; color: var(--ink-2); margin: 14px 0 6px; }
+  .empty { color: var(--ink-3); font-size: 15px; padding: 24px 4px; text-align: center; }
+
+  /* ── mail ──────────────────────────────────────────────────────────────── */
+  .seg { display: flex; background: var(--line-2); border-radius: 12px; padding: 3px; margin-bottom: 10px; }
+  .seg button { flex: 1; min-height: 38px; border: 0; background: transparent; border-radius: 10px; font-size: 14.5px; color: var(--ink-2); }
+  .seg button[aria-pressed="true"] { background: var(--card); color: var(--ink); box-shadow: 0 1px 2px rgb(23 32 28 / 0.08); }
+  .msg { padding: 12px 2px; border-top: 1px solid var(--line-2); } .msg:first-child { border-top: 0; }
+  .msg .s { font-weight: 600; } .msg .m { color: var(--ink-3); font-size: 13.5px; margin-top: 2px; }
+  .tag { display: inline-block; font-size: 12px; color: var(--ink-2); background: var(--line-2); border-radius: 6px; padding: 1px 7px; margin-left: 6px; vertical-align: middle; }
+  table.sheet { border-collapse: collapse; font-size: 13.5px; min-width: 640px; }
+  table.sheet th, table.sheet td { border-bottom: 1px solid var(--line); padding: 8px 10px; text-align: left; vertical-align: top; }
+  table.sheet th { color: var(--ink-3); font-weight: 500; }
+  .scroll { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+  #log { font-size: 13px; line-height: 1.5; color: var(--ink-2); max-height: 280px; overflow: auto; font-variant-numeric: tabular-nums; }
+  .err { color: var(--red); }
+
+  /* ── approval sheet ────────────────────────────────────────────────────── */
+  #veil { position: fixed; inset: 0; background: rgb(23 32 28 / 0.35); opacity: 0; pointer-events: none; transition: opacity 240ms ease; z-index: 20; }
+  #sheet { position: fixed; left: 0; right: 0; bottom: 0; z-index: 21; max-width: 680px; margin: 0 auto; background: var(--card);
+           border-radius: 22px 22px 0 0; padding: 14px 18px calc(18px + env(safe-area-inset-bottom)); max-height: 90vh; overflow: auto;
+           transform: translateY(105%); visibility: hidden; transition: transform 200ms var(--ease-out), visibility 0s 200ms;
+           box-shadow: 0 -8px 40px rgb(23 32 28 / 0.14); }
+  body.asking #veil { opacity: 1; pointer-events: auto; }
+  body.asking #sheet { transform: translateY(0); visibility: visible; transition: transform 380ms var(--ease-drawer), visibility 0s; }
+  #sheet .grab { width: 40px; height: 4px; border-radius: 4px; background: var(--line); margin: 0 auto 14px; }
+  #sheet .kv { font-size: 15px; margin-top: 6px; overflow-wrap: anywhere; } #sheet .kv b { color: var(--ink-3); font-weight: 500; margin-right: 6px; }
+  #sheet pre { max-height: 36vh; overflow: auto; }
+  #sheet .acts { display: flex; gap: 10px; margin-top: 14px; } #sheet .acts button { flex: 1; min-height: 48px; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .orch.busy .core::after, .row .spin { animation: none; }
+    .row, #sheet, body.asking #sheet { transition: opacity 150ms ease, border-color 150ms ease, background-color 150ms ease; transform: none !important; }
+    .spine .pulse { display: none; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="top">
+    <div class="wordmark">applyzer</div>
+    <div class="meta"><span id="model"></span><span id="clock"></span></div>
+  </div>
+
+  <!-- Live -->
+  <section class="panel on" id="p-live" role="tabpanel" aria-labelledby="t-live">
+    <p class="lede" id="lede">One orchestrator, a cast of small subagents, and you approving every send. Press Prepare and watch it work.</p>
+    <div class="orch" id="orch">
+      <div class="core" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"/></svg></div>
+      <div><div class="who">Orchestrator</div><div class="what" id="orchwhat">Waiting for you</div></div>
+      <button class="primary run" data-act="prepare">Prepare</button>
+    </div>
+    <div class="spine" id="spine">
+      <div class="pulse" id="pulse" aria-hidden="true"></div>
+      <div class="stage" data-stage="prepare"><div class="name">Prepare</div><div class="cast">Reads the resume and each posting, tailors the resume, writes the letter and the email, finds who to write to</div><div class="rows"></div></div>
+      <div class="stage" data-stage="send"><div class="name">Send</div><div class="cast">Checks the caps, then waits for your yes on every email</div><div class="rows"></div></div>
+      <div class="stage" data-stage="track"><div class="name">Track</div><div class="cast">Sorts replies, drafts answers in the thread, follows up on a schedule</div><div class="rows"></div></div>
+    </div>
+    <div id="outcome" hidden></div>
+    <div class="runbar">
+      <button data-act="check_replies">Check replies</button>
+      <button data-act="follow_ups">Follow-ups</button>
+      <button data-act="report">Weekly report</button>
+    </div>
+    <div class="clockrow"><span id="clocktext"></span><button id="plus4">+4 days</button><button id="plus7">+7 days</button><button class="quiet skip" id="skip" hidden>Skip ahead</button></div>
+    <details class="small" style="margin-top:14px"><summary>Every step, as it happened</summary><div id="log"></div></details>
+  </section>
+
+  <!-- Jobs -->
+  <section class="panel" id="p-jobs" role="tabpanel" aria-labelledby="t-jobs">
+    <h1 style="margin:6px 0 12px">Applications</h1>
+    <div id="apps"><p class="empty">Nothing yet. Press Prepare on the Live tab.</p></div>
+  </section>
+
+  <!-- Mail -->
+  <section class="panel" id="p-mail" role="tabpanel" aria-labelledby="t-mail">
+    <h1 style="margin:6px 0 4px">Mailbox</h1>
+    <p class="lede">A pretend mailbox and sheet, so nothing is really sent.</p>
+    <div class="seg" role="group" aria-label="Folder">
+      <button aria-pressed="true" data-box="sent">Sent</button><button aria-pressed="false" data-box="drafts">Drafts</button>
+      <button aria-pressed="false" data-box="inbox">Inbox</button><button aria-pressed="false" data-box="sheet">Sheet</button>
+    </div>
+    <div class="job" id="box"><p class="empty">Empty.</p></div>
+  </section>
+
+  <!-- Setup -->
+  <section class="panel" id="p-setup" role="tabpanel" aria-labelledby="t-setup">
+    <h1 style="margin:6px 0 4px">Setup</h1>
+    <p class="lede">The jobs, your resume and the answers forms ask for.</p>
+    <label for="jobs">Jobs, one per line: a link, or Company | Role | link | hr@company.com</label>
+    <textarea id="jobs" rows="5"></textarea>
+    <label for="resume">Your resume, as text</label>
+    <textarea id="resume" rows="10"></textarea>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div><label for="notice">Notice period, days</label><input id="notice" inputmode="numeric"></div>
+      <div><label for="ctc">Expected pay</label><input id="ctc"></div>
+    </div>
+    <div class="runbar" style="margin-top:16px"><button class="primary" id="save">Save</button><button class="danger" id="reset">Start over</button></div>
+  </section>
+</main>
+
+<nav class="tabs" aria-label="Sections"><div class="in" role="tablist">
+  <button role="tab" id="t-live" aria-selected="true" data-tab="live"><svg viewBox="0 0 24 24"><path d="M4 12h3l3-7 4 14 3-7h3"/></svg>Live<span class="dot"></span></button>
+  <button role="tab" id="t-jobs" aria-selected="false" data-tab="jobs"><svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="15" rx="2"/><path d="M8 3v4M16 3v4M4 10h16"/></svg>Jobs<span class="dot"></span></button>
+  <button role="tab" id="t-mail" aria-selected="false" data-tab="mail"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 7 9 6 9-6"/></svg>Mail<span class="dot"></span></button>
+  <button role="tab" id="t-setup" aria-selected="false" data-tab="setup"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.5-2.4 1a7 7 0 0 0-2-1.2L14 3h-4l-.5 2.6a7 7 0 0 0-2 1.2l-2.4-1-2 3.5 2 1.5A7 7 0 0 0 5 12a7 7 0 0 0 .1 1.2l-2 1.5 2 3.5 2.4-1a7 7 0 0 0 2 1.2L10 21h4l.5-2.6a7 7 0 0 0 2-1.2l2.4 1 2-3.5-2-1.5c.07-.4.1-.8.1-1.2Z"/></svg>Setup<span class="dot"></span></button>
+</div></nav>
+
+<div id="veil"></div>
+<section id="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+  <div class="grab"></div>
+  <h2 id="sheet-title">Send this email?</h2>
+  <p class="muted small" style="margin:4px 0 10px">Nothing goes out until you say yes. Keep it as a draft and it waits in your drafts instead.</p>
+  <div class="kv"><b>To</b><span id="ap-to"></span></div>
+  <div class="kv"><b>Subject</b><span id="ap-sub"></span></div>
+  <div class="kv" id="ap-attrow"><b>Attached</b><span id="ap-att"></span></div>
+  <pre id="ap-body"></pre>
+  <div class="acts"><button id="ap-no">Keep as draft</button><button class="primary" id="ap-yes">Send it</button></div>
+</section>
+
+<script>
+const KEY = new URLSearchParams(location.search).get("k") || "";
+const $ = (s, el = document) => el.querySelector(s);
+const $$ = (s, el = document) => [...el.querySelectorAll(s)];
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+// the cast: which stage each part belongs to, how it reads, and what it is doing while it runs
+// stage, name, what it says while running, what it says when done, kind
+const CAST = {
+  profile: ["prepare", "Resume reader", "reading your resume into a profile", "read your resume into a profile"],
+  github: ["prepare", "GitHub reader", "reading your repos", "read your repos"],
+  web: ["prepare", "Page reader", "opening a page", "pages read"],
+  posting: ["prepare", "Posting reader", "reading what the job asks for", "read what each job asks for"],
+  picker: ["prepare", "Project picker", "picking the projects that fit", "picked the projects that fit"],
+  tailor: ["prepare", "Resume tailor", "reordering and rewording your resume", "tailored your resume to each job"],
+  facts: ["prepare", "Fact checker", "checking every line against your resume", "checked", "code"],
+  letter: ["prepare", "Cover letter writer", "writing the letter", "wrote the cover letter"],
+  contact: ["prepare", "Contact finder", "looking for someone to write to", "looked for someone to write to"],
+  writer: ["prepare", "Email writer", "writing the email", "wrote the email"],
+  gate: ["send", "Send gate", "checking the daily cap and one email per company", "checked", "code"],
+  you: ["send", "You", "deciding", "decided", "you"],
+  mail: ["send", "Mailbox", "working", "done"], sheet: ["send", "Your sheet", "writing the rows", "rows written"],
+  sorter: ["track", "Reply sorter", "sorting the reply", "sorted the reply"],
+  replier: ["track", "Reply writer", "drafting a reply in the thread", "drafted a reply in the thread"],
+  followup: ["track", "Follow-up writer", "writing the follow-up", "wrote the follow-up"],
+  reporter: ["track", "Report", "counting where everything stands", "counted"],
+};
+const STAGE_OF_NODE = {prepare: "prepare", paste_posting: "prepare", draft: "send", send: "send", keep: "send", mark_applied: "send",
+  not_applying: "send", check_replies: "track", follow_ups: "track", report: "track"};
+const ACTION = {prepare: "Preparing applications", paste_posting: "Preparing the pasted posting", send_email: "Sending",
+  mark_applied: "Marking as applied", not_applying: "Removing", check_replies: "Checking replies", follow_ups: "Writing follow-ups",
+  report: "Counting the week", mail_trigger: "A reply arrived"};
+const ICON = {code: '<svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>', you: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
+  run: '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/></svg>', done: '<svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>'};
+
+// ── playback ───────────────────────────────────────────────────────────────
+let seq = 0, queue = [], playing = false, lastState = null, lastAction = null, rowOf = {}, active = {}, counts = {}, first = true, current = null;
+const BEAT = REDUCED ? 60 : 190;
+
+function stageEl(stage) { return $(`.stage[data-stage="${stage}"]`); }
+function clearTrace() { $$(".rows").forEach(r => r.innerHTML = ""); $$(".stage").forEach(s => s.classList.remove("on", "done")); rowOf = {}; active = {}; counts = {}; current = null; invented = 0; }
+
+function pulseTo(el) {
+  if (REDUCED || !el) return;
+  const spine = $("#spine").getBoundingClientRect(), r = el.getBoundingClientRect(), pulse = $("#pulse");
+  const y = r.top - spine.top + 14;
+  pulse.animate([{transform: "translateY(0)", opacity: 1}, {transform: `translateY(${y}px)`, opacity: 1}, {transform: `translateY(${y}px)`, opacity: 0}],
+    {duration: 480, easing: "cubic-bezier(0.77, 0, 0.175, 1)", fill: "forwards"});
+}
+
+const busyIcon = kind => kind === "code" ? ICON.code : kind === "you" ? ICON.you : '<span class="spin"></span>';
+const SIZE = /^\d[\d,]* characters$/;
+
+function startRow(node, detail) {
+  // one row per subagent per run: parallel or repeated work shows as a count, never as a stack of rows
+  const [home, title, doing, , kind] = CAST[node] || ["prepare", node, "", ""];
+  const st = stageEl(current || home); st.classList.add("on");
+  counts[node] = (counts[node] || 0) + 1; active[node] = (active[node] || 0) + 1;
+  let row = rowOf[node];
+  if (!row) {
+    row = document.createElement("div");
+    row.className = `row${kind ? " " + kind : ""}`; row.dataset.node = node;
+    row.innerHTML = `<div class="ic"></div><div><div class="t">${esc(title)}</div><div class="d"></div></div><div class="n"></div>`;
+    $(".rows", st).appendChild(row); rowOf[node] = row;
+    pulseTo(row);
+    row.scrollIntoView({block: "nearest", behavior: REDUCED ? "auto" : "smooth"});
+  }
+  row.classList.add("on");
+  $(".ic", row).innerHTML = busyIcon(kind);
+  $(".d", row).textContent = detail ? (node === "web" ? detail.replace(/^https?:\/\//, "") : detail) : doing;
+  $(".n", row).textContent = counts[node] > 1 ? `×${counts[node]}` : "";
+}
+
+const INVENTED = /^(\d+) invented line/;
+let invented = 0;
+
+function endRow(node, detail) {
+  const row = rowOf[node]; if (!row) return;
+  const [, , , did, kind] = CAST[node] || [];
+  active[node] = Math.max(0, (active[node] || 1) - 1);
+  if (node === "facts" && detail) {  // one tally across every check this run: the number a founder asks about
+    invented += +(detail.match(INVENTED) || [0, 0])[1];
+    detail = invented ? `${invented} invented line${invented > 1 ? "s" : ""} removed` : "nothing invented";
+  }
+  if (detail && !SIZE.test(detail) && node !== "web") { $(".d", row).textContent = detail; row.dataset.final = "1"; }
+  if (active[node]) return;
+  row.classList.remove("on");
+  $(".ic", row).innerHTML = kind === "you" ? ICON.you : ICON.done;
+  if (!row.dataset.final) $(".d", row).textContent = node === "web" ? `${counts[node]} ${did}` : did || "done";
+}
+
+function say(text) { $("#orchwhat").textContent = (text || "").split(/(?<=[.!?])\s+/)[0]; }
+
+function play(e) {
+  log(e);
+  if (e.kind === "run" && e.phase === "start") {
+    clearTrace(); lastAction = e.detail;
+    $("#orch").classList.add("busy"); say(ACTION[e.detail] || e.detail); $("#outcome").hidden = true;
+    if (e.detail === "mail_trigger") { current = "track"; stageEl("track").classList.add("on"); }
+  } else if (e.kind === "run" && e.phase === "end") {
+    $("#orch").classList.remove("busy"); say(e.detail);
+    Object.keys(active).forEach(n => { active[n] = 1; endRow(n); }); $$(".stage.on").forEach(s => { s.classList.remove("on"); s.classList.add("done"); });
+  } else if (e.kind === "error") {
+    $("#orch").classList.remove("busy"); say("Stopped: " + e.detail);
+  } else if (e.kind === "node") {
+    const stage = STAGE_OF_NODE[e.node];
+    if (stage && e.phase === "start") { current = stage; $$(".stage.on").forEach(s => { if (s.dataset.stage !== stage) { s.classList.remove("on"); s.classList.add("done"); } }); stageEl(stage).classList.add("on"); }
+  } else if (["agent", "tool", "check", "gate"].includes(e.kind)) {
+    if (e.phase === "start") startRow(e.node, e.detail); else endRow(e.node, e.detail);
+    if (e.node === "you" && e.phase === "start") say("Waiting for your yes");
+  } else if (e.kind === "clock") say(e.detail);
+}
+
+async function pump() {
+  if (playing) return;
+  playing = true;
+  while (queue.length) {
+    const e = queue.shift();
+    play(e);
+    $("#skip").hidden = queue.length < 8;
+    await new Promise(r => setTimeout(r, e.phase === "end" || e.kind === "node" ? BEAT / 2 : BEAT));
+  }
+  $("#skip").hidden = true; playing = false;
+  if (lastState) render(lastState);
+}
+$("#skip").onclick = () => { const rest = queue.splice(0); rest.forEach(e => log(e)); const end = rest.reverse().find(e => e.kind === "run" || e.kind === "error"); if (end) play(end); };
+
+function log(e) {
+  const t = new Date(e.t * 1000).toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+  const line = document.createElement("div"); line.className = e.kind === "error" ? "err" : "";
+  line.textContent = `${t}  ${e.node} ${e.phase} ${e.detail}`; $("#log").prepend(line);
+}
+
+// ── state ──────────────────────────────────────────────────────────────────
+async function api(path, body) {
+  const r = await fetch(`${path}${path.includes("?") ? "&" : "?"}k=${encodeURIComponent(KEY)}`,
+    body ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : {});
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) { say(data.error || r.statusText); throw new Error(data.error); }
+  return data;
+}
+
+let box = "sent", inputsShown = false, tab = "live";
+async function poll() {
+  try {
+    const s = await api(`/api/state?after=${seq}`);
+    if (s.events.length) {
+      seq = s.events[s.events.length - 1].seq;
+      if (first) { s.events.forEach(log); if (s.running) { queue.push(...s.events.slice(-40)); pump(); } }  // a page opened mid-run catches up; an old backlog is not replayed
+      else { queue.push(...s.events); pump(); }
+    }
+    first = false; lastState = s; renderLive(s); renderLists(s);
+    if (!playing) render(s);
+    setTimeout(poll, s.running || queue.length ? 600 : 2200);
+  } catch { setTimeout(poll, 3000); }
+}
+
+function renderLive(s) {
+  $("#model").textContent = s.model === "rehearsal model" ? "Rehearsal model" : s.model;
+  $("#clock").textContent = s.clock.days ? `${s.clock.date} (+${s.clock.days} days)` : s.clock.date;
+  $("#clocktext").textContent = s.clock.days ? `The clock is ${s.clock.days} days ahead.` : "Skip the clock ahead for follow-ups:";
+  $$("button[data-act], #plus4, #plus7, #reset, .acts button[data-row]").forEach(b => b.disabled = s.running);
+  const ask = !!s.approval;
+  document.body.classList.toggle("asking", ask);
+  if (ask) {
+    $("#ap-to").textContent = s.approval.to; $("#ap-sub").textContent = s.approval.subject; $("#ap-body").textContent = s.approval.text;
+    $("#ap-attrow").hidden = !s.approval.file; $("#ap-att").textContent = s.approval.file || "";
+    if (!document.activeElement?.closest?.("#sheet")) $("#ap-yes").focus({preventScroll: true});
+  }
+  if (!inputsShown && s.inputs) {
+    inputsShown = true;
+    $("#jobs").value = s.inputs.jobs || ""; $("#resume").value = s.inputs.resume_text || "";
+    $("#notice").value = s.inputs.notice_days ?? ""; $("#ctc").value = s.inputs.expected_ctc || "";
+  }
+}
+
+function pillClass(st) {
+  if (/^ready to send/.test(st)) return "p-blue"; if (/emailed|replied|applied/.test(st)) return "p-green";
+  if (/needs|rewriting|draft|no address/.test(st)) return "p-amber"; return "p-grey";
+}
+
+function renderLists(s) {
+  const r = s.result || {}, apps = r.applications;
+  if (apps) $("#apps").innerHTML = apps.length ? apps.map((a, i) => card(a, i + 1, s.running)).join("") : `<p class="empty">No applications.</p>`;
+  $("#t-jobs").classList.toggle("badged", !!(apps || []).some(a => a.update));
+  renderBox(s);
+}
+
+function render(s) {
+  renderLive(s);
+  const r = s.result || {};
+  const needs = r.needs_you || [];
+  const out = $("#outcome");
+  if (r.summary) {
+    out.hidden = false; out.className = "outcome" + (needs.length ? " needs" : "");
+    out.innerHTML = `<div>${esc(r.summary)}</div>${needs.length ? `<ul>${needs.map(x => `<li>${esc(x)}</li>`).join("")}</ul>` : ""}
+      ${r.by_stage ? `<p class="small muted" style="margin-top:6px">${Object.entries(r.by_stage).map(([k, v]) => `${v} ${esc(k)}`).join(", ")}</p>` : ""}
+      ${(r.could_not || []).length ? `<p class="small muted" style="margin-top:6px">Couldn't: ${esc(r.could_not.join("; "))}</p>` : ""}`;
+  }
+  $("#t-live").classList.toggle("badged", !!needs.length);
+  renderLists(s);
+}
+
+function card(a, row, busy) {
+  const st = a.stage, dis = busy ? "disabled" : "";
+  const canSend = /^ready to send|draft in your/.test(st), tracked = /emailed|applied|replied/.test(st);
+  const pdf = k => `/api/pdf?row=${row}&kind=${k}&k=${encodeURIComponent(KEY)}`;
+  return `<article class="job">
+    <div class="head"><span class="co">${esc(a.company)}</span><span class="role">${esc(a.role)}</span></div>
+    <span class="pill ${pillClass(st)}">${esc(st)}</span>
+    ${a.contact ? `<div class="line">To <b>${esc(a.contact)}</b></div>` : ""}
+    ${a.fit ? `<div class="line">${esc(a.fit.charAt(0).toUpperCase() + a.fit.slice(1))}${a.lines_dropped ? `. <b>${a.lines_dropped} invented line${a.lines_dropped > 1 ? "s" : ""} removed</b>` : ""}</div>` : ""}
+    ${a.note ? `<div class="line">${esc(a.note)}</div>` : ""}
+    ${a.update ? `<div class="update">${esc(a.update)}</div>` : ""}
+    <div class="acts">
+      ${canSend ? `<button class="primary" data-row="${row}" data-do="send_email" ${dis}>Send</button>` : ""}
+      ${/needs the posting/.test(st) ? `<button data-row="${row}" data-do="paste" ${dis}>Paste the posting</button>` : ""}
+      ${tracked ? `<select data-row="${row}" data-do="reply" aria-label="Pretend the company replies" ${dis}>
+          <option value="">Pretend they reply…</option><option value="interview">Interview invite</option><option value="question">"Send your CV?"</option>
+          <option value="notice">"Notice period?"</option><option value="rejection">Rejection</option><option value="offer">Offer</option>
+          <option value="opt_out">"Remove me"</option><option value="auto_ack">Auto-acknowledgement</option></select>` : ""}
+      ${/^ready|draft in your|needs/.test(st) ? `<button data-row="${row}" data-do="mark_applied" ${dis}>I applied</button>` : ""}
+    </div>
+    ${a.email || a.fit ? `<details><summary>What it wrote</summary>
+      ${a.email ? `<p class="small muted" style="margin-top:8px">The email</p><pre>${esc(a.email)}</pre>${a.email_problems ? `<p class="small err" style="margin-top:6px">${esc(a.email_problems)}</p>` : ""}` : ""}
+      ${a.cover_letter ? `<p class="small muted" style="margin-top:10px">The cover letter</p><pre>${esc(a.cover_letter)}</pre>` : ""}
+      <div class="acts">${a.fit ? `<a class="btn" href="${pdf("resume")}" target="_blank" rel="noopener">Open the resume PDF</a>
+        ${a.cover_letter ? `<a class="btn" href="${pdf("letter")}" target="_blank" rel="noopener">Letter PDF</a>` : ""}` : ""}
+        ${!/closed/.test(st) ? `<button class="danger" data-row="${row}" data-do="not_applying" ${dis}>Not applying</button>` : ""}</div>
+    </details>` : (!/closed/.test(st) ? `<div class="acts"><button class="danger" data-row="${row}" data-do="not_applying" ${dis}>Not applying</button></div>` : "")}
+    <div class="paste" id="paste-${row}" hidden><label for="pt-${row}">The posting's text</label><textarea id="pt-${row}"></textarea>
+      <div class="acts"><button class="primary" data-row="${row}" data-do="paste_posting">Prepare it</button></div></div>
+  </article>`;
+}
+
+function renderSheet(rows) {
+  if (!rows.length) return `<p class="empty">No rows yet. Every run writes the applications it changed here.</p>`;
+  const cols = ["Company", "Role", "Stage", "Sent to", "Sent at", "Follow-ups", "Reply", "Updated"];
+  return `<div class="scroll"><table class="sheet"><thead><tr>${cols.map(c => `<th>${esc(c)}</th>`).join("")}</tr></thead>
+    <tbody>${rows.map(r => `<tr>${cols.map(c => `<td>${esc(r[c])}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+}
+
+function renderBox(s) {
+  if (box === "sheet") { $("#box").innerHTML = renderSheet(s.sheet || []); return; }
+  const items = s.mailbox[box] || [];
+  $("#box").innerHTML = items.length ? items.map(m => {
+    const who = box === "inbox" ? `from ${m.sender}` : `to ${m.to}`, when = (m.messageTimestamp || m.at || "").slice(0, 16).replace("T", " ");
+    const text = m.messageText || m.text || "";
+    return `<div class="msg"><div class="s">${esc(m.subject)}${m.attachment ? `<span class="tag">${esc(m.attachment)}</span>` : ""}${m.thread ? `<span class="tag">in thread</span>` : ""}</div>
+      <div class="m">${esc(who)}, ${esc(when)}</div><details><summary>Read</summary><pre>${esc(text)}</pre></details></div>`;
+  }).join("") : `<p class="empty">Empty.</p>`;
+}
+
+// ── controls ───────────────────────────────────────────────────────────────
+function showTab(name) {
+  tab = name;
+  $$(".panel").forEach(p => p.classList.toggle("on", p.id === "p-" + name));
+  $$("nav.tabs button").forEach(b => b.setAttribute("aria-selected", b.dataset.tab === name));
+  window.scrollTo({top: 0, behavior: "auto"});
+}
+document.addEventListener("click", async ev => {
+  const b = ev.target.closest("button");
+  if (!b || b.disabled) return;
+  try {
+    if (b.dataset.tab) showTab(b.dataset.tab);
+    else if (b.dataset.act) { await api("/api/run", {action: b.dataset.act}); showTab("live"); }
+    else if (b.dataset.box) { box = b.dataset.box; $$("[data-box]").forEach(x => x.setAttribute("aria-pressed", x === b)); if (lastState) renderBox(lastState); }
+    else if (b.dataset.do === "paste") { const p = $("#paste-" + b.dataset.row); p.hidden = !p.hidden; if (!p.hidden) $("textarea", p).focus(); }
+    else if (b.dataset.do === "paste_posting") { await api("/api/run", {action: "paste_posting", row: +b.dataset.row, text: $("#pt-" + b.dataset.row).value}); showTab("live"); }
+    else if (b.dataset.do === "not_applying") { if (confirm("Remove this job? It won't be prepared again.")) await api("/api/run", {action: "not_applying", row: +b.dataset.row}); }
+    else if (b.dataset.do) { await api("/api/run", {action: b.dataset.do, row: +b.dataset.row}); showTab("live"); }
+    else if (b.id === "plus4" || b.id === "plus7") await api("/api/clock", {days: b.id === "plus4" ? 4 : 7});
+    else if (b.id === "ap-yes" || b.id === "ap-no") { document.body.classList.remove("asking"); await api("/api/approve", {decision: b.id === "ap-yes" ? "approve" : "reject"}); }
+    else if (b.id === "save") { await api("/api/inputs", {jobs: $("#jobs").value, resume_text: $("#resume").value, notice_days: $("#notice").value, expected_ctc: $("#ctc").value}); say("Saved. Press Prepare."); showTab("live"); }
+    else if (b.id === "reset") { if (confirm("Clear every application, the mailbox and the clock?")) { await api("/api/reset", {}); seq = 0; inputsShown = false; clearTrace(); $("#outcome").hidden = true; say("Cleared. Press Prepare."); showTab("live"); } }
+  } catch {}
+});
+document.addEventListener("change", async ev => {
+  const sel = ev.target.closest("select[data-do=reply]");
+  if (!sel || !sel.value) return;
+  try { await api("/api/reply", {row: +sel.dataset.row, kind: sel.value}); showTab("live"); } catch {}
+  sel.value = "";
+});
+document.addEventListener("keydown", ev => { if (ev.key === "Escape" && document.body.classList.contains("asking")) $("#ap-no").click(); });
+poll();
+</script>
+</body>
+</html>

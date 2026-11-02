@@ -1,0 +1,12 @@
+build/
+.venv/
+__pycache__/
+.pytest_cache/
+.gravity/
+.env
+.v1/
+demo/.state/
+Gravity.agent.md
+Gravity.getting-started.md
+problem-to-agent.md
+.ruff_cache/
