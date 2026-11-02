@@ -46,8 +46,8 @@ It prints a link for this machine and one for a phone on the same Wi-Fi. A stand
 
 Built and tested with fakes (89 tests), never run against dev. Before a real run:
 
-- gravity-cli PR #46 (gravity-schema 0.12.4) has to be merged, released and on dev's gateway: it lets a v2 Gmail send
-  carry the resume, lets a draft sit in a thread, and returns a send's thread so replies can be matched.
+- gravity-cli PR #46 (gravity-schema 0.13.7) has to be merged, released and on dev's gateway: it lets a v2 Gmail send
+  carry the resume. Drafts in a thread and a send's thread are already in 0.13.6.
 - The Gravity SDK is not on PyPI: for `gravity run`, `uv pip install -e <core repo>/packages/gravity-sdk` into `.venv`.
 
 Follow-ups are drafts in Gmail, by decision, until the weekly report shows most go out unchanged. Deferred issues are

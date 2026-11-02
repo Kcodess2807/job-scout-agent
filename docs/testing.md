@@ -33,9 +33,8 @@ gravity connect gmail
 gravity connect exa            # or firecrawl / tavily, then add --use page=firecrawl to each run
 ```
 
-Before a send carries the resume, Gravity's dev gateway needs the gravity-schema change from the gravity-cli branch
-`feat/gmail-v2-attachment-thread-draft` (Gmail's send and draft take the file; a draft can sit in a thread; a send
-returns its thread). Until then a send goes without the attachment and replies can't be matched by thread.
+Before a send carries the resume, Gravity's dev gateway needs gravity-schema 0.13.7 (gravity-cli PR #46: Gmail's
+send, draft and reply take the file). Until then a send goes without the attachment.
 
 Under `gravity run`, memory collections are kept in `.gravity/memory/` (`gravity memory show applications`), and
 each run's PDFs are written to `.gravity/applications/`. `gravity memory clear` starts over.
