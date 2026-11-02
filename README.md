@@ -1,29 +1,109 @@
-# applyzer
+# applyzer: the apply-and-track job agent
 
-The apply-and-track half of the job pipeline, as a Gravity agent (contract v2). Given jobs a candidate has decided
-to apply for, it tailors their resume and cover letter to each one from their own facts, finds someone to write to,
-sends only when the candidate approves, then tracks replies and drafts follow-ups in their mailbox.
+A Gravity agent (contract v2) that takes the jobs a candidate has decided to apply for and does the rest: tailors
+their resume and cover letter to each posting from their own facts, finds someone to write to, sends only when the
+candidate approves, then tracks replies and drafts follow-ups in their mailbox.
 
-Finding the jobs (steps 1 to 5 of the pipeline) is not in here. It plugs in through one function: a discovery node
-inside this graph calls `jobs.add(rows, "discovery")` with rows of `{company, title, url, hr_email}` and routes to
-`prepare`. Nothing else in the agent knows where a row came from. See `docs/spec.md` §5.
+It is a port of [APPLYZER](https://github.com/Kcodess2807/APPLYZER) onto Gravity, keeping what worked there (the
+documents per job, the reviewed batch, the application email, the follow-up rules, the sheet) and dropping its
+FastAPI, Postgres, LaTeX and Apps Script layers, which Gravity's memory, approvals, schedules and mail trigger replace.
 
-## What is here
+**Where this sits in the pipeline.** The job pipeline has nine steps. Steps 1 to 5 (profile, discover, normalise,
+score, verify) are being written separately. This agent is steps 6, 7 and 9: tailor, reach out, track. Step 8, the
+application form, is out: a run has no browser, so the agent gives the candidate an answer sheet to paste instead.
+
+**Status (2026-11-03).** Built, 89 tests passing with fakes, a demo that runs the real graph on a laptop or a phone.
+Never run against dev. See [What is not done](#what-is-not-done).
+
+---
+
+## How it works
+
+One LangGraph graph (`src/agent.py`), routed by the action the person pressed or by a mail-trigger event. Models read
+pages into fields and write prose. Code decides everything else: what runs, what is sent, what counts as a fact.
+
+### Actions
+
+| Action | What happens |
+|---|---|
+| **Prepare** (default) | Reads the resume once into a profile (re-read only when the text changes). Reads each posting through the person's page reader. Picks up to three of the candidate's GitHub projects for it. Tailors the resume: the model may reorder, select and reword, never add; code then drops any line whose numbers, employers, dates, tools or proper nouns are not in the resume. Writes a cover letter (180 to 250 words) and an email. Finds a contact. At most 5 jobs a run, inside the run's budget. |
+| **Send** (per row) | Opens an approval for each email. An address that came with the job (on the job line or printed on the posting) gets APPLYZER's application email, three bullets of proof, with the tailored resume attached. A person found on the company's own pages gets a short note under 90 words with no attachment. Caps: 20 sends a day, one email per company in 30 days; two roles at one company share one email. A refused send is kept as a Gmail draft. |
+| **I applied** (per row) | The candidate submitted the form; the follow-up clock starts. |
+| **Not applying** (per row) | Removes the job for good; a shared email is rewritten for the roles left. |
+| **Paste the posting** (per row) | For a page the reader could not open (LinkedIn's sign-in wall, Indeed): the candidate pastes the text and it is prepared. |
+| **Check replies** | Started by the mail trigger when a reply lands, or by hand. Matches mail by thread; for an applied job also by the company's domain or a known ATS sender naming the company. Anything else is ignored, never classified. Rules first (bounce, out of office, auto-acknowledgement, opt-out), then the model: interview, online test, offer, rejection, question, other. Interview and offer get a drafted reply in the thread; a recruiter's question is answered from the candidate's own answers when they cover it ("send your CV" attaches the resume); a rejection gets a two-line thanks with a referral ask. An opt-out suppresses the company. |
+| **Follow-ups** (daily, 09:00) | Drafts only, by decision (below). Application email: day 7 and 14. Short note: day 4 and 10. Closed at 21 with no email. A form application with no thread: one note at day 7, only to an address that came with the job. Before each draft the thread is checked: anyone else's message since the send stops it. Drafts the candidate sent by hand are found in Sent and measured for how much they were changed. |
+| **Weekly report** (Monday 09:00) | Counts by stage, sends and replies this week, and how many follow-up drafts the candidate sent unchanged. |
+
+Every result shows one table, the applications, in a fixed order, with an `update` column for what that run did to
+each row. Per-row buttons act on that table's row numbers, so the order never changes between results.
+
+### The seam for discovery
+
+Collection `jobs`, one row per posting, keyed on the posting URL's host and path (no query), else `company:title`:
+
+```
+{key, company, title, url, domain, location, description, hr_email, source, found_at, order}
+```
+
+Today the rows come from the `jobs` input (one per line: a link, or `Company | Role | link | hr@company.com`). The
+discovery code lands as nodes inside this graph (memory collections are per agent, so a separate agent could not
+write them) and calls one function:
+
+```python
+await jobs.add(rows, "discovery")   # src/jobs.py: upserts new rows, keeps input order, returns the new ones
+```
+
+then routes to `prepare`. Nothing else in the agent knows where a row came from.
+
+### Memory
+
+Notebook: the profile, the resume's hash, the day's send count, the table's row order. Collections: `jobs`,
+`projects` (GitHub repos, re-read only when pushed), `applications` (one per job: stage, contact, the tailored resume
+as JSON, letter and email text, thread, sent_at, applied_on, follow-up drafts, replies), `declined`, `suppressed`.
+PDFs are never stored; they are re-rendered from the JSON when needed.
+
+### The contract v2 manifest
+
+| Name | Capability | Default app | Picked by the person at setup |
+|---|---|---|---|
+| source `mail` | `message.search` | same account as `send` | |
+| source `page` | `web_page.get` | Exa | Exa, Firecrawl, Tavily or Composio Search |
+| write `send` | `message.send`, under approvals | Gmail | Gmail or Outlook |
+| write `draft` | `message.create` | same as `send` | |
+| write `tracker` (optional) | `row.upsert` | Google Sheets | their own spreadsheet, or Notion |
+
+The optional sheet gets one row per application, keyed on the posting link, updated after every run: APPLYZER's
+columns plus company, role, the reply and the last reply. A person who sets none up loses nothing: the applications
+table in every result is the record.
+
+---
+
+## What is in the repo
 
 | Path | What |
 |---|---|
-| `manifest.yaml` | The agent: inputs, sources (`mail`, `page`), writes (`send`, `draft`, optional `tracker` sheet), actions, memory |
-| `src/agent.py` | The graph: prepare, send (draft → send → keep), mark applied, not applying, check replies, follow-ups, report |
-| `src/jobs.py` | The seam: job rows, their key, `add()` |
-| `src/candidate.py` | The resume read into a profile; GitHub repos read into projects |
-| `src/tailor.py` | Requirements from a posting, the tailored resume, the cover letter, the fact check that drops any line the resume can't back |
-| `src/outreach.py`, `src/writer.py` | The email (application or short note), its checks, who to write to |
-| `src/replies.py`, `src/stages.py` | Reply matching and sorting; the send gate and follow-up cadence |
-| `src/resume_pdf.py` | The resume PDF (Typst), laid out like APPLYZER's LaTeX template |
-| `demo/` | A local page, phone-friendly, that runs the real graph with a pretend mailbox |
-| `docs/` | `spec.md` (design), `plan.md`, `ledger.md` (every decision and deferred issue), `testing.md` (how to test) |
+| `manifest.yaml` | The agent |
+| `src/agent.py` | The graph and every node |
+| `src/jobs.py` | Job rows, their key, `add()` |
+| `src/candidate.py` | The resume read into a profile (APPLYZER's parser prompt); GitHub repos read into projects (APPLYZER's enrichment prompt, plus a "README only" rule) |
+| `src/tailor.py` | Requirements from a posting, the project pick (APPLYZER's prompt, order kept), the tailored resume, the facts check, the cover letter, the PDFs |
+| `src/resume_pdf.py` | The resume laid out like APPLYZER's `resume.cls`, rendered with Typst (TeX can't run in the sandbox) |
+| `src/outreach.py`, `src/writer.py` | Who to write to; the application email and the short note; the checks (length, claims, links, banned phrases); APPLYZER's follow-up prompt |
+| `src/replies.py`, `src/stages.py` | Reply matching and sorting; the answer bank; the send gate and the follow-up cadence |
+| `src/mail.py`, `src/research.py`, `src/evidence.py`, `src/store.py`, `src/tooling.py` | Mail records (Gmail, the trigger's and v2's shapes), page reading and the contact finder, the quote check, memory (with a local file store under `gravity run`), the v2 calls and the model |
+| `tests/` | `test_logic.py` (the rules), `test_graph.py` (the whole graph with fake tools and a fake model), `test_copied.py` (rules carried from the sibling agent) |
+| `demo/` | `server.py` (the real graph with a pretend mailbox, approvals you tap, a clock you can skip ahead, a live view of the orchestrator and its parts), `index.html`, `rehearsal.py` (a stand-in model), `samples.py` |
+| `docs/spec.md` | The design: intent, goals, constraints, approaches, every action, the seam |
+| `docs/plan.md` | The build plan, ticked |
+| `docs/ledger.md` | Every decision made while building, with why and what it costs if wrong; the review findings and what was fixed; the deferred minor issues |
+| `docs/testing.md` | How to test: the fakes, a real run on dev, the demo |
 
-## Run the tests
+---
+
+## Run it
+
+Tests (no network):
 
 ```powershell
 uv venv --python 3.12
@@ -33,22 +113,59 @@ $env:GRAVITY_RUN_TOKEN="t"; $env:GRAVITY_LLM_URL="http://x"; $env:GRAVITY_GATEWA
 gravity validate
 ```
 
-## See it work
+The demo:
 
 ```powershell
 .venv\Scripts\python demo\server.py
 ```
 
-It prints a link for this machine and one for a phone on the same Wi-Fi. A stand-in model answers by default;
-`docs/testing.md` §3 says how to point it at a real one.
+It prints a link for this machine and one for a phone on the same Wi-Fi. Four tabs: Live (the orchestrator and a
+spine of Prepare, Send and Track, each part lighting up as it runs), Jobs, Mail (a pretend Sent, Drafts, Inbox and
+Sheet), Setup. A stand-in model answers by default; `docs/testing.md` §3 says how to point it at a real one (any
+OpenAI-compatible endpoint).
 
-## Status (2026-11-03)
+A real run against dev: `docs/testing.md` §2. Short version: `gravity login`, `gravity connect gmail`, install the
+Gravity SDK from the core repo into `.venv` (it is not on PyPI), then `gravity run --input jobs=@jobs.txt --input
+resume_text=@cv.txt`. For a first send use a job line whose address is your own.
 
-Built and tested with fakes (89 tests), never run against dev. Before a real run:
+---
 
-- gravity-cli PR #46 (gravity-schema 0.13.7) has to be merged, released and on dev's gateway: it lets a v2 Gmail send
-  carry the resume. Drafts in a thread and a send's thread are already in 0.13.6.
-- The Gravity SDK is not on PyPI: for `gravity run`, `uv pip install -e <core repo>/packages/gravity-sdk` into `.venv`.
+## Decisions already made
 
-Follow-ups are drafts in Gmail, by decision, until the weekly report shows most go out unchanged. Deferred issues are
-at the end of `docs/ledger.md`.
+All in `docs/ledger.md` with the reasoning. The ones a teammate should know:
+
+- **Nothing is sent without the candidate's yes.** `message.send` is under approvals. Scheduled runs cannot wait on
+  one, so the daily follow-up run drafts and never sends.
+- **Follow-ups stay drafts for now** (Arush, 2026-11-03). The weekly report counts how many drafts the candidate
+  sent unchanged; when most do, follow-ups switch to sending on their own.
+- **No invented claims.** Every generated line is checked against the resume's own text; a line that fails is
+  dropped and the row says how many were. APPLYZER's resume generator filled gaps with made-up projects and numbers;
+  none of that came over.
+- **One email per company.** Two roles prepared together share one email naming both; a later role at the same
+  company within 30 days is drafted, not sent.
+- **No Hunter.** Contract v2 has no address finder, so a found person needs an address printed on the company's own
+  pages. Expect "no address yet" rows until that is solved (a built-in in the gateway, or Apollo, now a v2 built-in).
+- **The resume PDF follows APPLYZER's LaTeX template**, rendered with Typst: capitals, ruled headings, Objective,
+  Skills as a two-column table after Education.
+- **The sheet is a mirror, not the record.** Gravity's per-user memory is the system of record; the sheet is
+  optional and per person.
+
+## What is not done
+
+- **No run against dev yet.** Everything is tested with fakes and the demo's stand-in model. The first real run will
+  find what fakes can't: Gmail's real records, run time, whether the mail trigger, per-row buttons and memory
+  collections behave for a v2 agent on dev, and the sheet's first write into an empty spreadsheet.
+- **The attachment needs the platform.** gravity-schema 0.13.7 (gravity-cli PR #46, released 2026-11-03) lets a v2
+  Gmail send, draft or reply carry a file. Dev's gateway has to pick it up; until then a send goes without the resume.
+- **The real model has never run the prompts.** Read ten tailored resumes and letters before trusting them.
+- **Not built, by design:** discovery, the application form, LinkedIn and X, calendar slots, the interview prep
+  pack, project ideas with a starter repo, the funded-startup lane.
+- **Nine deferred minor issues** at the end of `docs/ledger.md`, for example: a draft pressed Send before the daily
+  run notices a hand-send can go out twice; a two-role email attaches only the clicked row's resume; "closed to new
+  applicants after 30 Nov" on a live posting reads as closed.
+
+## History
+
+Built 2026-11-02 and 03 from a written spec (`docs/spec.md`), test first, with one fresh-eyes review (two critical
+and seven important findings, all fixed) and a second pass after moving from contract v1 to v2. The v1 version is not
+in this repo.
