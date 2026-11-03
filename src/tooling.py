@@ -41,6 +41,11 @@ class Gravity:
         records = got.get("records") or []
         return (records[0].get("text") or "") if records else ""
 
+    async def read(self, source: str, **args) -> dict:
+        """A read of any declared source, as the search engine calls it (search, page, search_more, answers,
+        similar). A source the person did not set up raises, which the engine treats as that channel being off."""
+        return await gravity.read(source, **args)
+
     async def mail(self, text: str) -> list[dict]:
         """Messages matching a search (Gmail's syntax: in:inbox newer_than:2d), as mail.messages records."""
         import mail
@@ -65,6 +70,13 @@ class Gravity:
         draft = {"to": [to], "subject": subject, "text": text, **({"thread": thread} if thread else {})}
         got = await gravity.act("draft", draft=draft, **({"file": file} if file else {}))
         return got.get("record") or {}
+
+
+def make_embedder():
+    """The search's embeddings (its gateway.py), or None without a model endpoint."""
+    from gateway import make_embedder as his  # src/scout, on the path once discover is imported
+
+    return his()
 
 
 def make_io() -> Gravity:

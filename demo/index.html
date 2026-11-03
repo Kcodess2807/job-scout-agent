@@ -180,7 +180,7 @@
 
   <!-- Live -->
   <section class="panel on" id="p-live" role="tabpanel" aria-labelledby="t-live">
-    <p class="lede" id="lede">One orchestrator, a cast of small subagents, and you approving every send. Press Prepare and watch it work.</p>
+    <p class="lede" id="lede">One orchestrator, a cast of small subagents, and you approving every send. Press Find jobs, or Prepare for the jobs you pasted, and watch it work.</p>
     <div class="orch" id="orch">
       <div class="core" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"/></svg></div>
       <div><div class="who">Orchestrator</div><div class="what" id="orchwhat">Waiting for you</div></div>
@@ -188,12 +188,14 @@
     </div>
     <div class="spine" id="spine">
       <div class="pulse" id="pulse" aria-hidden="true"></div>
+      <div class="stage" data-stage="find"><div class="name">Find</div><div class="cast">Searches job boards and careers pages, opens each posting to check it is open, scores the fit against the resume</div><div class="rows"></div></div>
       <div class="stage" data-stage="prepare"><div class="name">Prepare</div><div class="cast">Reads the resume and each posting, tailors the resume, writes the letter and the email, finds who to write to</div><div class="rows"></div></div>
       <div class="stage" data-stage="send"><div class="name">Send</div><div class="cast">Checks the caps, then waits for your yes on every email</div><div class="rows"></div></div>
       <div class="stage" data-stage="track"><div class="name">Track</div><div class="cast">Sorts replies, drafts answers in the thread, follows up on a schedule</div><div class="rows"></div></div>
     </div>
     <div id="outcome" hidden></div>
     <div class="runbar">
+      <button data-act="discover">Find jobs</button>
       <button data-act="check_replies">Check replies</button>
       <button data-act="follow_ups">Follow-ups</button>
       <button data-act="report">Weekly report</button>
@@ -223,7 +225,11 @@
   <section class="panel" id="p-setup" role="tabpanel" aria-labelledby="t-setup">
     <h1 style="margin:6px 0 4px">Setup</h1>
     <p class="lede">The jobs, your resume and the answers forms ask for.</p>
-    <label for="jobs">Jobs, one per line: a link, or Company | Role | link | hr@company.com</label>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div><label for="role">Role to search for</label><input id="role"></div>
+      <div><label for="country">Country</label><input id="country"></div>
+    </div>
+    <label for="jobs">Jobs you already chose, one per line (leave empty to search)</label>
     <textarea id="jobs" rows="5"></textarea>
     <label for="resume">Your resume, as text</label>
     <textarea id="resume" rows="10"></textarea>
@@ -264,6 +270,8 @@ const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
 // the cast: which stage each part belongs to, how it reads, and what it is doing while it runs
 // stage, name, what it says while running, what it says when done, kind
 const CAST = {
+  search: ["find", "Job search", "searching boards and careers pages", "searches run"],
+  matcher: ["find", "Match scorer", "scoring the fit against your resume", "scored the fit"],
   profile: ["prepare", "Resume reader", "reading your resume into a profile", "read your resume into a profile"],
   github: ["prepare", "GitHub reader", "reading your repos", "read your repos"],
   web: ["prepare", "Page reader", "opening a page", "pages read"],
@@ -282,9 +290,9 @@ const CAST = {
   followup: ["track", "Follow-up writer", "writing the follow-up", "wrote the follow-up"],
   reporter: ["track", "Report", "counting where everything stands", "counted"],
 };
-const STAGE_OF_NODE = {prepare: "prepare", paste_posting: "prepare", draft: "send", send: "send", keep: "send", mark_applied: "send",
+const STAGE_OF_NODE = {discover: "find", pick: "prepare", prepare: "prepare", paste_posting: "prepare", draft: "send", send: "send", keep: "send", mark_applied: "send",
   not_applying: "send", check_replies: "track", follow_ups: "track", report: "track"};
-const ACTION = {prepare: "Preparing applications", paste_posting: "Preparing the pasted posting", send_email: "Sending",
+const ACTION = {discover: "Finding jobs that fit", pick: "Preparing the one you picked", prepare: "Preparing applications", paste_posting: "Preparing the pasted posting", send_email: "Sending",
   mark_applied: "Marking as applied", not_applying: "Removing", check_replies: "Checking replies", follow_ups: "Writing follow-ups",
   report: "Counting the week", mail_trigger: "A reply arrived"};
 const ICON = {code: '<svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></svg>', you: '<svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></svg>',
@@ -428,11 +436,12 @@ function renderLive(s) {
     inputsShown = true;
     $("#jobs").value = s.inputs.jobs || ""; $("#resume").value = s.inputs.resume_text || "";
     $("#notice").value = s.inputs.notice_days ?? ""; $("#ctc").value = s.inputs.expected_ctc || "";
+    $("#role").value = s.inputs.role || ""; $("#country").value = s.inputs.country || "";
   }
 }
 
 function pillClass(st) {
-  if (/^ready to send/.test(st)) return "p-blue"; if (/emailed|replied|applied/.test(st)) return "p-green";
+  if (/^ready to send|^found|^to prepare/.test(st)) return "p-blue"; if (/emailed|replied|applied/.test(st)) return "p-green";
   if (/needs|rewriting|draft|no address/.test(st)) return "p-amber"; return "p-grey";
 }
 
@@ -470,6 +479,7 @@ function card(a, row, busy) {
     ${a.note ? `<div class="line">${esc(a.note)}</div>` : ""}
     ${a.update ? `<div class="update">${esc(a.update)}</div>` : ""}
     <div class="acts">
+      ${/^found|^to prepare/.test(st) ? `<button class="primary" data-row="${row}" data-do="pick" ${dis}>Prepare this one</button>` : ""}
       ${canSend ? `<button class="primary" data-row="${row}" data-do="send_email" ${dis}>Send</button>` : ""}
       ${/needs the posting/.test(st) ? `<button data-row="${row}" data-do="paste" ${dis}>Paste the posting</button>` : ""}
       ${tracked ? `<select data-row="${row}" data-do="reply" aria-label="Pretend the company replies" ${dis}>
@@ -477,6 +487,7 @@ function card(a, row, busy) {
           <option value="notice">"Notice period?"</option><option value="rejection">Rejection</option><option value="offer">Offer</option>
           <option value="opt_out">"Remove me"</option><option value="auto_ack">Auto-acknowledgement</option></select>` : ""}
       ${/^ready|draft in your|needs/.test(st) ? `<button data-row="${row}" data-do="mark_applied" ${dis}>I applied</button>` : ""}
+      ${/^found/.test(st) && a.apply_link ? `<a class="btn" href="${esc(a.apply_link)}" target="_blank" rel="noopener">The posting</a>` : ""}
     </div>
     ${a.email || a.fit ? `<details><summary>What it wrote</summary>
       ${a.email ? `<p class="small muted" style="margin-top:8px">The email</p><pre>${esc(a.email)}</pre>${a.email_problems ? `<p class="small err" style="margin-top:6px">${esc(a.email_problems)}</p>` : ""}` : ""}
@@ -528,7 +539,7 @@ document.addEventListener("click", async ev => {
     else if (b.dataset.do) { await api("/api/run", {action: b.dataset.do, row: +b.dataset.row}); showTab("live"); }
     else if (b.id === "plus4" || b.id === "plus7") await api("/api/clock", {days: b.id === "plus4" ? 4 : 7});
     else if (b.id === "ap-yes" || b.id === "ap-no") { document.body.classList.remove("asking"); await api("/api/approve", {decision: b.id === "ap-yes" ? "approve" : "reject"}); }
-    else if (b.id === "save") { await api("/api/inputs", {jobs: $("#jobs").value, resume_text: $("#resume").value, notice_days: $("#notice").value, expected_ctc: $("#ctc").value}); say("Saved. Press Prepare."); showTab("live"); }
+    else if (b.id === "save") { await api("/api/inputs", {jobs: $("#jobs").value, resume_text: $("#resume").value, notice_days: $("#notice").value, expected_ctc: $("#ctc").value, role: $("#role").value, country: $("#country").value}); say("Saved."); showTab("live"); }
     else if (b.id === "reset") { if (confirm("Clear every application, the mailbox and the clock?")) { await api("/api/reset", {}); seq = 0; inputsShown = false; clearTrace(); $("#outcome").hidden = true; say("Cleared. Press Prepare."); showTab("live"); } }
   } catch {}
 });

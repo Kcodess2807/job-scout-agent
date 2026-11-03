@@ -1,0 +1,35 @@
+Priya Sharma
+AI Engineer | Python | LLMs
+Pune, India | priya.sharma@example.com | +91 98765 43210 | linkedin.com/in/priya-example
+
+SUMMARY
+AI engineer with 2+ years of experience building LLM applications and Python backends. Seeking a role as an Applied AI Engineer.
+
+EXPERIENCE
+AI Engineer at Nimbus Analytics
+Jan 2024 - Present
+- Built retrieval-augmented generation (RAG) services with LangChain and FastAPI serving 40k queries/day
+- Designed prompt evaluation pipelines in Python; deployed on AWS with Docker
+- Integrated pgvector for semantic search over support tickets
+
+Software Engineer, Kite Labs
+Jul 2022 - Dec 2023
+- Developed REST APIs with Django and PostgreSQL
+- Wrote unit tests with pytest and set up GitHub Actions CI/CD
+
+Machine Learning Intern | Orbit AI
+Jan 2022 - Jun 2022
+- Trained text classifiers with scikit-learn and pandas
+
+PROJECTS
+- Resume Q&A bot: LlamaIndex, OpenAI API, Streamlit
+- Kubernetes playground: deployed a toy service on a local cluster
+
+SKILLS
+Python, SQL, FastAPI, Django, LangChain, LlamaIndex, Docker, AWS, Git, React
+
+EDUCATION
+B.Tech in Computer Science, College of Engineering Pune, 2018 - 2022
+
+CERTIFICATIONS
+AWS Certified Cloud Practitioner

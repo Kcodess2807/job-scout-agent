@@ -50,6 +50,16 @@ class FakeIo:
     async def mail(self, text):
         return mail.messages(self._tool("gmail_read")({"query": text}))
 
+    HIS = {"search": "jobs", "page": "pages", "search_more": "jobs_more", "answers": "answers", "similar": "similar"}
+
+    async def read(self, source, **args):
+        """The search's reads: the fake endpoint for `source` hands back his FakeWeb, called by his source names. An
+        optional source the test set up no fake for is off, as the gateway answers for one the person skipped."""
+        if source not in self.t:
+            raise RuntimeError(f"this run has no sources.{source}")
+        web = self._tool(source)({"source": source})
+        return await web(self.HIS[source], **args)
+
     async def send(self, to, subject, text, file=None):
         got = self._tool("gmail_send")({"recipient_email": to, "subject": subject, "body": text, "is_html": False,
                                         **({"attachment": file} if file else {})})
@@ -84,6 +94,8 @@ class FakeModel:
         class Bound:
             async def ainvoke(self, messages):
                 fake.calls.append(schema.__name__)
+                if schema not in fake.canned:  # the search's own model calls: it treats a failure as "no model"
+                    raise RuntimeError(f"no canned answer for {schema.__name__}")
                 got = fake.canned[schema]
                 return got(messages[-1]["content"]) if callable(got) else got
         return Bound()
@@ -100,6 +112,7 @@ def wired(monkeypatch):
         model = FakeModel(canned)
         monkeypatch.setattr(agent, "make_io", lambda: FakeIo(t))
         monkeypatch.setattr(agent, "make_model", lambda: model)
+        monkeypatch.setattr(agent, "make_embedder", lambda: None)   # the search's embeddings: lexical fallback in tests
         return t, model
     return wire
 
@@ -224,10 +237,11 @@ async def test_at_most_five_jobs_a_run_and_the_rest_wait_for_the_next(wired):
     urls = [f"https://acme{i}.com/jobs/x" for i in range(7)]
     t, model = wired({"web_fetch": page_fetch({u: POSTING for u in urls})}, canned())
     out = await run({"inputs": {"jobs": "\n".join(urls), "resume_text": RESUME}})
-    assert len(out["result"]["applications"]) == 5
+    stages = [r["stage"] for r in out["result"]["applications"]]
+    assert len(stages) == 7 and stages.count("to prepare") == 2          # every job is on the board; two wait their turn
     assert any("2 more jobs wait" in n for n in out["result"]["could_not"])
     out = await run({"inputs": {"jobs": "\n".join(urls), "resume_text": RESUME}, "memory": out["memory"]})
-    assert len(out["result"]["applications"]) == 7
+    assert [r["stage"] for r in out["result"]["applications"]].count("to prepare") == 0
 
 
 async def test_a_declined_job_is_not_prepared_again(wired):
@@ -636,3 +650,54 @@ async def test_the_weekly_report_counts_follow_ups_drafted_sent_and_unchanged(wi
     out = await run({"memory": MEMORY, "inputs": {}, "actions": ["report"]})
     assert out["result"]["follow_ups"] == {"drafted": 3, "sent_by_you": 2, "sent_unchanged": 1}
     assert "2 of 3 follow-up drafts sent" in out["result"]["summary"]
+
+
+# ── discover: Sid's search inside this graph, through the seam ──────────────────────────────────────
+import sys as _sys  # noqa: E402
+from pathlib import Path as _Path  # noqa: E402
+
+_sys.path.insert(0, str(_Path(__file__).resolve().parent / "scout"))
+import fakes as scout_fakes  # noqa: E402  (his FakeWeb and fixture resume, from tests/scout)
+
+SEARCH_INPUTS = {"resume_text": scout_fakes.resume(), "role": "AI engineer", "country": "India", "city": "Pune",
+                 "remote": "either", "count": "3", "looking_for": "jobs", "employment_type": "any"}
+
+
+def search_tools():
+    web = scout_fakes.FakeWeb()
+    return {"search": lambda a: web, "page": lambda a: web, "gmail_send": lambda a: pytest.fail("a search never sends")}
+
+
+async def test_a_first_run_with_a_resume_and_no_job_links_searches_and_shows_what_it_found(wired):
+    t, model = wired(search_tools(), canned())
+    out = await run({"inputs": SEARCH_INPUTS})
+    r = out["result"]
+    found = [row for row in r["applications"] if row["stage"] == "found"]
+    assert 1 <= len(found) <= 3 and r["summary"].startswith(f"{len(found)} job")
+    row = found[0]
+    assert row["company"] and row["role"] and row["apply_link"].startswith("http") and row["fit"].startswith("fit ")
+    key = out["memory"]["last_rows"][0]
+    job = store.collection("jobs").get(key)
+    assert job["source"] == "discovery" and job["description"] and not job.get("picked")
+    assert "Tailored" not in model.calls                               # nothing is prepared until the person picks
+    assert out["memory"]["scout"]["seen"]                                # his notebook, under its own key
+    assert out["memory"].get("profile") is None or "resume_hash" in out["memory"]  # ours is untouched
+
+
+async def test_picking_a_found_job_prepares_it_and_the_rest_stay_found(wired):
+    t, model = wired(search_tools(), canned())
+    out = await run({"inputs": SEARCH_INPUTS})
+    n = len(out["result"]["applications"])
+    t, model = wired({**search_tools(), **gmail_none()}, canned())
+    out = await run({"inputs": SEARCH_INPUTS, "memory": out["memory"], "actions": ["pick"], "action_inputs": {"rows": ["1"]}})
+    rows = out["result"]["applications"]
+    assert len(rows) == n and rows[0]["stage"] in ("ready to send", "ready: no address yet") and rows[0]["pdf_name"]
+    assert all(row["stage"] == "found" for row in rows[1:])
+    assert "Tailored" in model.calls
+
+
+async def test_a_run_with_job_links_still_prepares_without_searching(wired):
+    t, model = wired({"web_fetch": page_fetch({"https://blacksmith.sh/careers/be": POSTING}), **search_tools()}, canned())
+    out = await run({"inputs": {**SEARCH_INPUTS, "jobs": "Blacksmith | Backend Engineer | https://blacksmith.sh/careers/be | hr@blacksmith.sh",
+                                "resume_text": RESUME}})
+    assert out["result"]["applications"][0]["stage"] == "ready to send" and not t["search"].calls

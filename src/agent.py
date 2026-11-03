@@ -21,6 +21,7 @@ import httpx
 from langgraph.graph import END, StateGraph
 
 import candidate
+import discover as finder  # puts src/scout (the vendored search) on the path
 import jobs
 import mail
 import outreach
@@ -30,11 +31,11 @@ import store
 import tailor
 import writer
 from candidate import Profile
-from tooling import make_io, make_model
+from tooling import make_embedder, make_io, make_model
 
 PER_RUN = 5            # jobs prepared a run, under the $1 run budget
 PDF_B64_MAX = 400_000  # a bigger PDF is not put in the result (job-scout's cap)
-STAGES = {"needs_text": "needs the posting's text", "closed": "closed", "docs_ready": "ready to send",
+STAGES = {"found": "found", "to_prepare": "to prepare", "needs_text": "needs the posting's text", "closed": "closed", "docs_ready": "ready to send",
           "draft_kept": "draft in your Gmail", "sent": "emailed", "applied": "applied", "replied": "replied",
           "done": "closed"}
 
@@ -86,14 +87,29 @@ def fit_line(a: dict) -> str:
     return has + ("; missing " + ", ".join(a["gaps"]) if a.get("gaps") else "")
 
 
-def board(apps: dict, pdfs: dict | None = None, updates: dict | None = None) -> tuple[list[dict], list[str]]:
-    """(the table every result shows, its keys in row order): every application in the order it was first
-    prepared, so a row number means the same job in every result. It is the only table in any result: a per-row
-    click gives the row numbers of the table it was under. `updates` is what this run did to each row."""
-    order = sorted((a for a in apps.values() if a.get("stage") != "removed"), key=lambda a: a.get("order") or "")
+def found_row(j: dict) -> dict:
+    """A job the search found (or one pasted and not yet prepared), as a row of the table."""
+    fit = f"fit {j['score']}: {j.get('why') or ''}".strip(": ") if j.get("score") is not None else ""
+    note = ", ".join(x for x in ((j.get("verified") or "").replace("_", " "), f"posted {j['posted']}" if j.get("posted") else "",
+                                 j.get("location") or "") if x)
+    return {"key": j["key"], "order": j.get("order") or "", "stage": "found" if j.get("source") == "discovery" else "to_prepare",
+            "company": j.get("company") or "", "title": j.get("title") or "", "url": j.get("url"), "fit_text": fit, "note": note}
+
+
+def board(all_jobs: dict, apps: dict, pdfs: dict | None = None, updates: dict | None = None) -> tuple[list[dict], list[str]]:
+    """(the table every result shows, its keys in row order): every job, in the order it arrived, with its application
+    when it has one, so a row number means the same job in every result. It is the only table in any result: a
+    per-row click gives the row numbers of the table it was under. `updates` is what this run did to each row."""
+    items = {**{k: found_row(j) for k, j in all_jobs.items()}, **{k: a for k, a in apps.items() if a.get("stage") != "removed"}}
+    order = sorted(items.values(), key=lambda a: a.get("order") or "")
     rows = []
     for a in order:
         e = a.get("email") or {}
+        if "fit_text" in a:  # a found job: no documents yet
+            rows.append({"company": a["company"], "role": a["title"], "stage": STAGES[a["stage"]], "contact": "", "fit": a["fit_text"],
+                         "apply_link": a.get("url") or "", "email": "", "email_problems": "", "lines_dropped": 0, "cover_letter": "",
+                         "note": a["note"], "update": (updates or {}).get(a["key"], "")})
+            continue
         row = {"company": a.get("company") or "", "role": a.get("title") or "", "stage": stage_label(a),
                "contact": contact_line(a.get("contact") or {}), "fit": fit_line(a),
                "apply_link": a.get("apply_url") or a.get("url") or "",
@@ -254,14 +270,14 @@ async def graph():
         apps_coll = store.collection("applications")
         apps = dict(apps_coll.find(limit=5000))
         if p is None:
-            rows, keys = board(apps)
+            rows, keys = board(dict(store.collection("jobs").find(limit=5000)), apps)
             return {"result": {"summary": "Nothing prepared: " + notes[0], "applications": rows, "could_not": notes},
                     "memory": {**notebook, "last_rows": keys}}
         projects = await load_projects(inputs, notes)
         all_jobs = dict(store.collection("jobs").find(limit=5000))
         declined = set(store.collection("declined").has_many(list(all_jobs)))
         focus = state.get("focus") or []
-        pending = sorted((r for k, r in all_jobs.items() if k not in apps and k not in declined),
+        pending = sorted((r for k, r in all_jobs.items() if k not in apps and k not in declined and r.get("picked", True)),
                          key=lambda r: (r["key"] not in focus, r.get("order") or ""))
         if len(pending) > PER_RUN:
             notes.append(f"{len(pending) - PER_RUN} more jobs wait for the next run ({PER_RUN} a run, to stay inside "
@@ -294,7 +310,7 @@ async def graph():
             store.put_safely(apps_coll, a["key"], a)
             apps[a["key"]] = a
         notes += await sheet(list(done))
-        rows, keys = board(apps, pdfs)
+        rows, keys = board(all_jobs, apps, pdfs)
         waiting = sum(a["stage"] == "needs_text" for a in done)
         summary = (f"{len(ready)} application{'s' if len(ready) != 1 else ''} ready"
                    + (f", {waiting} waiting for the posting's text" if waiting else "")
@@ -314,7 +330,8 @@ async def graph():
     def with_board(summary: str, notebook: dict, updates: dict | None = None, needs: list[str] | None = None,
                    extra: dict | None = None) -> dict:
         """A result: what needs the candidate, as lines first, then the one table, with what this run did per row."""
-        rows, keys = board(dict(store.collection("applications").find(limit=5000)), updates=updates)
+        rows, keys = board(dict(store.collection("jobs").find(limit=5000)), dict(store.collection("applications").find(limit=5000)),
+                           updates=updates)
         result = {"summary": summary, **({"needs_you": needs} if needs else {}), "applications": rows, **(extra or {})}
         return {"result": result, "memory": {**notebook, "last_rows": keys}}
 
@@ -443,11 +460,13 @@ async def graph():
     async def not_applying(state: State):
         coll, declined = store.collection("applications"), store.collection("declined")
         apps, removed = dict(coll.find(limit=5000)), []
+        job_rows = store.collection("jobs")
         for k in picked_keys(state):
             gone = apps.pop(k, None)
             removed += [gone] if gone else []
             store.put_safely(declined, k, {"at": utcnow().date().isoformat()})
             coll.delete(k)
+            job_rows.delete(k)
             # the role's mates shared one email naming it: theirs is written again by the next Prepare
             for b in apps.values():
                 if gone and gone.get("group") and b.get("group") == gone["group"] and b.get("stage") in ("docs_ready", "draft_kept"):
@@ -645,26 +664,59 @@ async def graph():
                           extra={"sent_this_week": sent, "replies_this_week": answered, "by_stage": dict(sorted(by_stage.items())),
                                  "follow_ups": {"drafted": len(fu), "sent_by_you": len(fu_sent), "sent_unchanged": unchanged}})
 
+    # ── discover: the vendored search, writing found jobs through the seam; pick: the person's choice -> prepare ──
+    async def discover(state: State):
+        inputs, notebook = state.get("inputs") or {}, dict(state.get("memory") or {})
+
+        async def read(source: str, **args):
+            return await io.read(finder.HIS_SOURCES[source], **args)
+        got = await finder.search(inputs, notebook.get("scout") or {}, read=read, model=model, embed=make_embedder())
+        if got["error"]:
+            return with_board(got["error"], notebook)
+        added = await jobs.add(got["rows"], "discovery")
+        notebook["scout"] = got["memory"]
+        n, new = len(got["rows"]), {r["key"] for r in added}
+        updates = {r["key"]: ("found this run" if r["key"] in new else "found again") for r in added}
+        summary = (f"{n} job{'s' if n != 1 else ''} found that fit your resume. Pick the ones to apply for."
+                   if n else "No job found that fits well enough this run.")
+        return with_board(summary, notebook, updates, extra={"could_not": got["warnings"]} if got["warnings"] else None)
+
+    async def pick(state: State):
+        coll, keys = store.collection("jobs"), picked_keys(state)
+        for k in keys:
+            if row := coll.get(k):
+                store.put_safely(coll, k, {**row, "picked": True})
+        return {"focus": keys}
+
     def route(state: State) -> str:
         # A run the mail trigger started carries the mail as inputs.event: it checks replies, never prepares.
-        if ((state.get("inputs") or {}).get("event") or {}).get("emails"):
+        inputs = state.get("inputs") or {}
+        if (inputs.get("event") or {}).get("emails"):
             return "check_replies"
         first = (state.get("actions") or ["prepare"])[0]
+        if first == "prepare" and not (inputs.get("jobs") or "").strip():
+            # nothing pasted: prepare what was picked, else go and find jobs
+            apps = set(k for k, _ in store.collection("applications").find(limit=5000))
+            waiting = any(j.get("picked", True) and k not in apps for k, j in store.collection("jobs").find(limit=5000))
+            if not waiting:
+                return "discover"
         return {"paste_posting": "paste_posting", "send_email": "draft", "mark_applied": "mark_applied",
                 "not_applying": "not_applying", "check_replies": "check_replies", "follow_ups": "follow_ups",
-                "report": "report"}.get(first, "prepare")
+                "report": "report", "discover": "discover", "pick": "pick"}.get(first, "prepare")
 
     nodes = {"prepare": prepare, "paste_posting": paste_posting, "draft": draft, "send": send, "keep": keep,
              "mark_applied": mark_applied, "not_applying": not_applying, "check_replies": check_replies,
-             "follow_ups": follow_ups, "report": report}
-    entries = ("prepare", "paste_posting", "draft", "mark_applied", "not_applying", "check_replies", "follow_ups", "report")
+             "follow_ups": follow_ups, "report": report, "discover": discover, "pick": pick}
+    entries = ("prepare", "paste_posting", "draft", "mark_applied", "not_applying", "check_replies", "follow_ups", "report",
+               "discover", "pick")
     wf = StateGraph(State)
     for name, fn in nodes.items():
         wf.add_node(name, fn)
     wf.set_conditional_entry_point(route, {n: n for n in entries})
     wf.add_edge("paste_posting", "prepare")
+    wf.add_edge("pick", "prepare")
     wf.add_edge("draft", "send")
     wf.add_edge("send", "keep")
-    for name in ("prepare", "keep", "mark_applied", "not_applying", "check_replies", "follow_ups", "report"):
+    for name in ("prepare", "keep", "mark_applied", "not_applying", "check_replies", "follow_ups", "report", "discover"):
         wf.add_edge(name, END)
     return wf.compile()

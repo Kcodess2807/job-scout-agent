@@ -185,3 +185,10 @@ two above: my default), the `needs_you` ordering, the Exa fallback when the comp
   the Sheets API.
 - `demo/`: a local page (phone-friendly) that runs the graph with a pretend mailbox and sheet, approvals as a sheet you
   tap, a clock to skip ahead, and the orchestrator and its parts lighting up as they run (`docs/testing.md` §3).
+
+## 13. The search, 2026-11-03
+
+Steps 1 to 5 arrived as Sid's `jobs-scout` and now run inside this graph as the `discover` action (`src/discover.py`
+over `src/scout/`). A found job is a row on the board, "found", with its fit score and why, until the person picks it
+("Prepare this one"), declines it, or pastes jobs instead. The default run searches when nothing is pasted and
+nothing picked is waiting.

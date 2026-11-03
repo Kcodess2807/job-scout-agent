@@ -32,7 +32,7 @@ from urllib.parse import parse_qs, urlparse
 
 DEMO = Path(__file__).resolve().parent
 STATE_DIR = DEMO / ".state"
-sys.path[:0] = [str(DEMO.parent / "src"), str(DEMO)]
+sys.path[:0] = [str(DEMO.parent / "src"), str(DEMO), str(DEMO.parent / "tests" / "scout")]  # his fixtures feed the demo's search
 os.environ["GRAVITY_MEMORY_DIR"] = str(STATE_DIR / "memory")  # collections and PDFs live here (store.py, agent.save_local)
 for _k, _v in {"GRAVITY_RUN_TOKEN": "demo", "GRAVITY_LLM_URL": "http://demo", "GRAVITY_GATEWAY_URL": "http://demo"}.items():
     os.environ.setdefault(_k, _v)
@@ -40,6 +40,8 @@ for _k, _v in {"GRAVITY_RUN_TOKEN": "demo", "GRAVITY_LLM_URL": "http://demo", "G
 import httpx  # noqa: E402
 
 import agent  # noqa: E402
+import discover  # noqa: E402  (puts src/scout on the path)
+import fakes as scout_fakes  # noqa: E402  (his FakeWeb: synthetic postings, so the search works offline)
 import mail  # noqa: E402
 import rehearsal  # noqa: E402
 import samples  # noqa: E402
@@ -60,7 +62,9 @@ ME = "you@your-gmail.example"
 
 def _fresh() -> dict:
     return {"inputs": {"jobs": samples.SAMPLE_JOBS, "resume_text": samples.SAMPLE_RESUME, "notice_days": 30,
-                       "expected_ctc": "28 LPA", "work_auth": "can work there", "relocate": "yes"},
+                       "expected_ctc": "28 LPA", "work_auth": "can work there", "relocate": "yes",
+                       "role": "AI engineer", "country": "India", "city": "Pune", "remote": "either", "count": "5",
+                       "looking_for": "jobs", "employment_type": "any"},
             "memory": {}, "mailbox": {"sent": [], "drafts": [], "inbox": []}, "sheet": {}, "offset_days": 0, "result": None,
             "action": None, "seq": 0}
 
@@ -112,6 +116,23 @@ class DemoIo:
                 text = ""
         emit("tool", "web", "end", f"{len(text):,} characters" if text else "nothing readable")
         return text
+
+    async def read(self, source: str, **args) -> dict:
+        """The search's sources. `search` answers from his synthetic postings (tests/scout/fixtures), so the demo
+        works offline; `page` tries those first, then the real web. The optional channels are off."""
+        if source == "search":
+            emit("tool", "search", "start", f"searching: {args.get('text', '')[:80]}")
+            got = await scout_fakes.FakeWeb()("jobs", **args)
+            emit("tool", "search", "end", f"{len(got.get('records') or [])} results")
+            return got
+        if source == "page":
+            url = (args.get("args") or {}).get("url") or args.get("id") or ""
+            try:
+                return await scout_fakes.FakeWeb()("pages", **args)
+            except RuntimeError:
+                text = await self.page(url)
+                return {"records": [{"url": url, "text": text}] if text else [], "complete": True, "warnings": []}
+        raise RuntimeError(f"this run has no sources.{source}")
 
     async def mail(self, query: str) -> list[dict]:
         emit("tool", "mail", "start", f"searching: {query}")
@@ -178,7 +199,7 @@ class Watched:
 
     def with_structured_output(self, schema):
         bound = self.inner.with_structured_output(schema)
-        node = AGENT_OF.get(schema.__name__, "orchestrator")
+        node = AGENT_OF.get(schema.__name__, "matcher" if STATE.get("action") in ("discover", "prepare") else "orchestrator")
         if node == "writer" and STATE.get("action") == "follow_ups":
             node = "followup"
 
@@ -233,6 +254,7 @@ def can_send(*args, **kwargs):
 
 tailor.grounded, writer.email_checks, stages.can_send = grounded, email_checks, can_send
 agent.make_io, agent.make_model, agent.utcnow = DemoIo, make_model, now
+agent.make_embedder = lambda: None  # the search's embeddings: lexical fallback in the demo
 
 
 # ── runs ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -377,12 +399,13 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(min(int(self.headers.get("Content-Length") or 0), 200_000)) or b"{}")
             if url.path == "/api/inputs":
                 STATE["inputs"].update({k: v for k, v in body.items() if k in (
-                    "jobs", "resume_text", "github_username", "notice_days", "current_ctc", "expected_ctc", "work_auth", "relocate", "links")})
+                    "jobs", "resume_text", "github_username", "notice_days", "current_ctc", "expected_ctc", "work_auth", "relocate", "links",
+                    "role", "country", "city", "count")})
                 save()
             elif url.path == "/api/run":
                 action = body.get("action")
                 if action not in ("prepare", "paste_posting", "send_email", "mark_applied", "not_applying",
-                                  "check_replies", "follow_ups", "report"):
+                                  "check_replies", "follow_ups", "report", "discover", "pick"):
                     raise ValueError("unknown action")
                 ai = {k: body[k] for k in ("text", "applied_on") if body.get(k)}
                 if body.get("row"):

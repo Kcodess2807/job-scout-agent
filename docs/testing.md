@@ -7,9 +7,12 @@ you run it.
 
 ```powershell
 cd "D:\PROJECTS\AI AGENTS\JOB SCOUT AGENT"
-$env:GRAVITY_RUN_TOKEN="t"; $env:GRAVITY_LLM_URL="http://x"; $env:GRAVITY_GATEWAY_URL="http://x"
-.venv\Scripts\python -m pytest -q
+$env:PYTHONUTF8="1"; $env:GRAVITY_RUN_TOKEN="t"; $env:GRAVITY_LLM_URL="http://x"; $env:GRAVITY_GATEWAY_URL="http://x"
+.venv\Scripts\python -m pytest -q          # ours and the search's (tests/scout, Sid's, 119) together: 212
 ```
+
+`PYTHONUTF8=1` is for Windows: the search's tests read their fixtures without naming an encoding, as the platform
+(UTF-8) lets them. `uv pip install pyyaml` once for them.
 
 `tests/test_logic.py` covers the rules: job rows and keys, the resume parser's shape, the GitHub sync, the facts
 check, the PDFs, the email checks, the contact order, the send gate, reply matching and sorting, the answer bank,
@@ -44,6 +47,8 @@ in another, one per line: a bare link, or `Company | Role | link | hr@company.co
 
 | What | Command | Look at |
 |---|---|---|
+| Find jobs | `gravity run --input resume_text=@cv.txt --input role="AI engineer" --input country=India --input count=5` (nothing pasted: the default run searches; up to 22 minutes) | the board: each job `found` with `fit N: why`, the posting link, verified or not; `could_not` for what the search could not find at the bar |
+| Prepare one found job | `gravity run --action pick --action-input rows=1` | the row becomes an application |
 | Prepare | `gravity run --input jobs=@jobs.txt --input resume_text=@cv.txt --input github_username=<you>` | `applications`: the stage, the contact and how it was found, `fit`, `lines_dropped` (bullets the facts check removed), the email, the PDF in `.gravity/applications/`; `answer_sheet`; `could_not`. Every result has this one table, so row numbers stay the same |
 | A LinkedIn link | the same with a `linkedin.com/jobs/view/...` line | its row says "needs the posting's text" |
 | Paste the posting | `gravity run --action paste_posting --action-input rows=<n> --action-input text=@posting.txt` | that row is prepared |
@@ -88,7 +93,11 @@ nothing is really sent. Four tabs:
   reply…" (drops a company's answer into the inbox the way the mail trigger would), and under "What it wrote" the
   email, the cover letter and the PDFs.
 - **Mail**: the pretend Sent, Drafts and Inbox, and the Sheet the tracker fills.
-- **Setup**: the jobs, the resume and the answers forms ask for. "Start over" clears everything.
+- **Setup**: the role and country to search for, the jobs you already chose, the resume and the answers forms ask for.
+  "Start over" clears everything.
+
+"Find jobs" runs the search over Sid's synthetic postings (tests/scout/fixtures), so the demo works offline; a found
+job's "Prepare this one" runs the rest for real.
 
 Send opens a sheet from the bottom with the email and its attachment: approve it, or keep it as a draft.
 

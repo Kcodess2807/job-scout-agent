@@ -85,9 +85,11 @@ async def add(rows: list[dict], source: str) -> list[dict]:
         key = job_key(r)
         if key not in fresh:  # order: when it arrived, then its line, so the table keeps the candidate's order
             fresh[key] = {**r, "key": key, "domain": r.get("domain") or company_domain(r), "source": source,
-                          "found_at": now, "order": f"{now}#{i:05d}"}
+                          "found_at": now, "order": f"{now}#{i:05d}",
+                          "picked": r.get("picked", source != "discovery")}  # a found job waits for the person's pick
     known = set(coll.has_many(list(fresh)))
+    declined = set(store.collection("declined").has_many(list(fresh)))  # "not applying" holds, from any source
     for key, r in fresh.items():
-        if key not in known:
+        if key not in known and key not in declined:
             store.put_safely(coll, key, r)
-    return [r for k, r in fresh.items() if k not in known]
+    return [r for k, r in fresh.items() if k not in known and k not in declined]

@@ -1,7 +1,7 @@
 contract: v2
 name: applyzer
-version: 0.2.0
-description: "Takes the jobs you chose and, for each, tailors your resume and cover letter from your own facts, finds someone to write to, and sends only when you approve. Then it tracks replies and drafts follow-ups in your Gmail."
+version: 0.3.0
+description: "Finds live jobs that fit your resume, or takes the ones you chose, and for each tailors your resume and cover letter from your own facts, finds someone to write to, and sends only when you approve. Then it tracks replies and drafts follow-ups in your Gmail."
 
 kind: interactive
 
@@ -9,7 +9,7 @@ runtime:
   framework: langgraph
   python: "3.12"
   entrypoint: src/agent.py:graph
-  timeout_seconds: 900
+  timeout_seconds: 1500
 
 dependencies:
   lockfile: requirements.lock
@@ -17,8 +17,7 @@ dependencies:
 inputs:
   - name: jobs
     type: textarea
-    label: "The jobs to apply for, one per line: a link to the posting, or Company | Role | link | hr@company.com"
-    required: true
+    label: "Jobs you already chose, one per line: a link to the posting, or Company | Role | link | hr@company.com. Leave it empty and I find jobs for you."
   - name: resume_file
     type: file
     label: "Your resume (PDF, Word or text)"
@@ -29,6 +28,41 @@ inputs:
   - name: github_username
     type: text
     label: "Your GitHub username, so your projects can be matched to each job (optional)"
+  - name: looking_for
+    type: static-dropdown
+    label: "Jobs or internships?"
+    options: [jobs, internships]
+    default: jobs
+  - name: role
+    type: text
+    label: "Which role? Leave blank to use the one your resume shows (e.g. data analyst, AI engineer)"
+  - name: country
+    type: text
+    label: "Which country?"
+    default: "India"
+  - name: city
+    type: text
+    label: "Which cities? Most preferred first (optional)"
+  - name: remote
+    type: static-dropdown
+    label: "Remote, on-site or either? (\"remote\" shows remote jobs only)"
+    options: [either, prefer remote, remote, on-site or hybrid]
+    default: either
+  - name: experience_years
+    type: text
+    label: "Years of work experience, e.g. 0.5 or 2 (blank: read from your resume)"
+  - name: employment_type
+    type: static-dropdown
+    label: "Employment type"
+    options: [any, full-time, part-time, contract]
+    default: any
+  - name: count
+    type: text
+    label: "How many jobs to find? 1 to 25"
+    default: "10"
+  - name: min_salary
+    type: text
+    label: "Minimum yearly salary, e.g. 600000 (optional; only checked when a posting states pay)"
   - name: notice_days
     type: number
     label: "Notice period, in days"
@@ -65,8 +99,27 @@ sources:
     same_as: send
   page:
     capability: web_page.get
-    default_app: exa
+    default_app: composio_search
     label: "What reads job postings and company pages"
+  search:
+    capability: web_result.search
+    default_app: composio_search
+    label: "Which web search to find job postings with"
+  search_more:
+    capability: web_result.search
+    default_app: exa
+    label: "A second web search for more postings (optional)"
+    required: false
+  answers:
+    capability: web_answer.get
+    default_app: composio_search
+    label: "An AI web search that cites job pages (optional)"
+    required: false
+  similar:
+    capability: web_result.find_similar
+    default_app: composio_search
+    label: "Finding postings similar to your best matches (optional)"
+    required: false
 
 writes:
   send:
@@ -94,9 +147,13 @@ actions:
   - name: prepare
     label: "Prepare applications"
     default: true
+  - name: discover
+    label: "Find jobs for me"
+  - name: pick
+    label: "Prepare this one"
+    per_row: true
   - name: paste_posting
     label: "Paste the posting"
-    requires: [prepare]
     per_row: true
     inputs:
       - name: text
@@ -104,11 +161,9 @@ actions:
         label: "The posting's text, for a page I couldn't read"
   - name: send_email
     label: "Send"
-    requires: [prepare]
     per_row: true
   - name: mark_applied
     label: "I applied"
-    requires: [prepare]
     per_row: true
     inputs:
       - name: applied_on
@@ -116,24 +171,20 @@ actions:
         label: "When did you apply? Leave it for today."
   - name: not_applying
     label: "Not applying"
-    requires: [prepare]
     per_row: true
   - name: check_replies
     label: "Check replies"
-    requires: [prepare]
   - name: follow_ups
     label: "Follow-ups"
-    requires: [prepare]
     schedule: { cron: "0 9 * * *", consumer_can_change: true }
   - name: report
     label: "Weekly report"
-    requires: [prepare]
     schedule: { cron: "0 9 * * 1", consumer_can_change: true }
 
 offer_as: buttons
 
 memory:
-  notebook_kb: 64
+  notebook_kb: 256
   notebook_per: user
   collections:
     jobs: { per: user, keep_days: 365, max_items: 5000, max_item_kb: 32 }

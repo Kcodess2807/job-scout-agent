@@ -1,19 +1,24 @@
-# applyzer: the apply-and-track job agent
+# applyzer: the job agent
 
-A Gravity agent (contract v2) that takes the jobs a candidate has decided to apply for and does the rest: tailors
-their resume and cover letter to each posting from their own facts, finds someone to write to, sends only when the
-candidate approves, then tracks replies and drafts follow-ups in their mailbox.
+A Gravity agent (contract v2) that finds live jobs that fit a candidate's resume, or takes the ones they chose, and
+does the rest: tailors their resume and cover letter to each posting from their own facts, finds someone to write
+to, sends only when the candidate approves, then tracks replies and drafts follow-ups in their mailbox.
 
-It is a port of [APPLYZER](https://github.com/Kcodess2807/APPLYZER) onto Gravity, keeping what worked there (the
-documents per job, the reviewed batch, the application email, the follow-up rules, the sheet) and dropping its
-FastAPI, Postgres, LaTeX and Apps Script layers, which Gravity's memory, approvals, schedules and mail trigger replace.
+Two halves, one graph. The search is Sid's `jobs-scout` (https://github.com/Sid20rathi/Job-scout-agent), vendored
+unchanged under `src/scout/` with his tests under `tests/scout/` (`src/scout/VENDORED.md` says how to bring a newer
+version over). The rest is a port of Arush's APPLYZER.
 
-**Where this sits in the pipeline.** The job pipeline has nine steps. Steps 1 to 5 (profile, discover, normalise,
-score, verify) are being written separately. This agent is steps 6, 7 and 9: tailor, reach out, track. Step 8, the
-application form, is out: a run has no browser, so the agent gives the candidate an answer sheet to paste instead.
+The apply-and-track half is a port of [APPLYZER](https://github.com/Kcodess2807/APPLYZER) onto Gravity, keeping what
+worked there (the documents per job, the reviewed batch, the application email, the follow-up rules, the sheet) and
+dropping its FastAPI, Postgres, LaTeX and Apps Script layers, which Gravity's memory, approvals, schedules and mail
+trigger replace.
 
-**Status (2026-11-03).** Built, 89 tests passing with fakes, a demo that runs the real graph on a laptop or a phone.
-Never run against dev. See [What is not done](#what-is-not-done).
+**Where this sits in the pipeline.** Of the pipeline's nine steps, this agent does 1 to 7 and 9: profile, discover,
+normalise, score, verify (the search), then tailor, reach out and track. Step 8, the application form, is out: a run
+has no browser, so the agent gives the candidate an answer sheet to paste instead.
+
+**Status (2026-11-03).** Built, 212 tests passing with fakes (93 ours, 119 the search's), a demo that runs the real
+graph on a laptop or a phone. Never run against dev. See [What is not done](#what-is-not-done).
 
 ---
 
@@ -26,6 +31,8 @@ pages into fields and write prose. Code decides everything else: what runs, what
 
 | Action | What happens |
 |---|---|
+| **Find jobs** (`discover`; the default run when nothing is pasted) | The search: resume to profile, the person's role, country, city, remote and count to search preferences, then boards and careers pages through the `search` source, each posting opened through `page` to check it is open, scored against the resume (threshold 70), deduplicated, ranked. The qualified jobs land on the board as `found`, with the fit score, why, and the posting link. Up to 22 minutes; stops early once it has enough. |
+| **Prepare this one** (`pick`, per row) | Marks a found job picked and prepares it. |
 | **Prepare** (default) | Reads the resume once into a profile (re-read only when the text changes). Reads each posting through the person's page reader. Picks up to three of the candidate's GitHub projects for it. Tailors the resume: the model may reorder, select and reword, never add; code then drops any line whose numbers, employers, dates, tools or proper nouns are not in the resume. Writes a cover letter (180 to 250 words) and an email. Finds a contact. At most 5 jobs a run, inside the run's budget. |
 | **Send** (per row) | Opens an approval for each email. An address that came with the job (on the job line or printed on the posting) gets APPLYZER's application email, three bullets of proof, with the tailored resume attached. A person found on the company's own pages gets a short note under 90 words with no attachment. Caps: 20 sends a day, one email per company in 30 days; two roles at one company share one email. A refused send is kept as a Gmail draft. |
 | **I applied** (per row) | The candidate submitted the form; the follow-up clock starts. |
@@ -46,15 +53,10 @@ Collection `jobs`, one row per posting, keyed on the posting URL's host and path
 {key, company, title, url, domain, location, description, hr_email, source, found_at, order}
 ```
 
-Today the rows come from the `jobs` input (one per line: a link, or `Company | Role | link | hr@company.com`). The
-discovery code lands as nodes inside this graph (memory collections are per agent, so a separate agent could not
-write them) and calls one function:
-
-```python
-await jobs.add(rows, "discovery")   # src/jobs.py: upserts new rows, keeps input order, returns the new ones
-```
-
-then routes to `prepare`. Nothing else in the agent knows where a row came from.
+Rows come from the `jobs` input (one per line: a link, or `Company | Role | link | hr@company.com`), picked at once,
+or from the search (`src/discover.py` turns his `ScoutOutcome` into rows and calls `jobs.add(rows, "discovery")`),
+unpicked until the person says "Prepare this one". Nothing past the seam knows where a row came from. A declined
+posting never comes back from either.
 
 ### Memory
 
@@ -68,7 +70,9 @@ PDFs are never stored; they are re-rendered from the JSON when needed.
 | Name | Capability | Default app | Picked by the person at setup |
 |---|---|---|---|
 | source `mail` | `message.search` | same account as `send` | |
-| source `page` | `web_page.get` | Exa | Exa, Firecrawl, Tavily or Composio Search |
+| source `page` | `web_page.get` | Composio Search | Exa, Firecrawl, Tavily or Composio Search |
+| source `search` | `web_result.search` | Composio Search | any web search |
+| sources `search_more`, `answers`, `similar` (optional) | a second search, an AI web search, "more like this" | Exa, Composio Search | skipped quietly when not set up |
 | write `send` | `message.send`, under approvals | Gmail | Gmail or Outlook |
 | write `draft` | `message.create` | same as `send` | |
 | write `tracker` (optional) | `row.upsert` | Google Sheets | their own spreadsheet, or Notion |
@@ -86,13 +90,15 @@ table in every result is the record.
 | `manifest.yaml` | The agent |
 | `src/agent.py` | The graph and every node |
 | `src/jobs.py` | Job rows, their key, `add()` |
+| `src/discover.py` | The search as one call: his resume reader, profile, preferences and `engine.scout`, over this agent's sources; the rows for the seam |
+| `src/scout/` | Sid's search, vendored unchanged: providers for 20-odd boards and ATS systems, transport with budgets and backoff, normalising, verifying, dedupe, eligibility, scoring, ranking |
 | `src/candidate.py` | The resume read into a profile (APPLYZER's parser prompt); GitHub repos read into projects (APPLYZER's enrichment prompt, plus a "README only" rule) |
 | `src/tailor.py` | Requirements from a posting, the project pick (APPLYZER's prompt, order kept), the tailored resume, the facts check, the cover letter, the PDFs |
 | `src/resume_pdf.py` | The resume laid out like APPLYZER's `resume.cls`, rendered with Typst (TeX can't run in the sandbox) |
 | `src/outreach.py`, `src/writer.py` | Who to write to; the application email and the short note; the checks (length, claims, links, banned phrases); APPLYZER's follow-up prompt |
 | `src/replies.py`, `src/stages.py` | Reply matching and sorting; the answer bank; the send gate and the follow-up cadence |
 | `src/mail.py`, `src/research.py`, `src/evidence.py`, `src/store.py`, `src/tooling.py` | Mail records (Gmail, the trigger's and v2's shapes), page reading and the contact finder, the quote check, memory (with a local file store under `gravity run`), the v2 calls and the model |
-| `tests/` | `test_logic.py` (the rules), `test_graph.py` (the whole graph with fake tools and a fake model), `test_copied.py` (rules carried from the sibling agent) |
+| `tests/` | `test_logic.py` (the rules), `test_graph.py` (the whole graph with fake tools and a fake model, the search included over his fixture postings), `test_copied.py` (rules carried from the sibling agent), `tests/scout/` (his 119) |
 | `demo/` | `server.py` (the real graph with a pretend mailbox, approvals you tap, a clock you can skip ahead, a live view of the orchestrator and its parts), `index.html`, `rehearsal.py` (a stand-in model), `samples.py` |
 | `docs/spec.md` | The design: intent, goals, constraints, approaches, every action, the seam |
 | `docs/plan.md` | The build plan, ticked |
@@ -107,8 +113,8 @@ Tests (no network):
 
 ```powershell
 uv venv --python 3.12
-uv pip install -r requirements.txt pytest pytest-asyncio
-$env:GRAVITY_RUN_TOKEN="t"; $env:GRAVITY_LLM_URL="http://x"; $env:GRAVITY_GATEWAY_URL="http://x"
+uv pip install -r requirements.txt pytest pytest-asyncio pyyaml
+$env:PYTHONUTF8="1"; $env:GRAVITY_RUN_TOKEN="t"; $env:GRAVITY_LLM_URL="http://x"; $env:GRAVITY_GATEWAY_URL="http://x"
 .venv\Scripts\python -m pytest -q
 gravity validate
 ```
@@ -120,8 +126,8 @@ The demo:
 ```
 
 It prints a link for this machine and one for a phone on the same Wi-Fi. Four tabs: Live (the orchestrator and a
-spine of Prepare, Send and Track, each part lighting up as it runs), Jobs, Mail (a pretend Sent, Drafts, Inbox and
-Sheet), Setup. A stand-in model answers by default; `docs/testing.md` §3 says how to point it at a real one (any
+spine of Find, Prepare, Send and Track, each part lighting up as it runs), Jobs, Mail (a pretend Sent, Drafts, Inbox
+and Sheet), Setup. "Find jobs" searches Sid's synthetic postings, so the demo works offline. A stand-in model answers by default; `docs/testing.md` §3 says how to point it at a real one (any
 OpenAI-compatible endpoint).
 
 A real run against dev: `docs/testing.md` §2. Short version: `gravity login`, `gravity connect gmail`, install the
@@ -158,8 +164,10 @@ All in `docs/ledger.md` with the reasoning. The ones a teammate should know:
 - **The attachment needs the platform.** gravity-schema 0.13.7 (gravity-cli PR #46, released 2026-11-03) lets a v2
   Gmail send, draft or reply carry a file. Dev's gateway has to pick it up; until then a send goes without the resume.
 - **The real model has never run the prompts.** Read ten tailored resumes and letters before trusting them.
-- **Not built, by design:** discovery, the application form, LinkedIn and X, calendar slots, the interview prep
-  pack, project ideas with a starter repo, the funded-startup lane.
+- **The search has its own unknowns**, in his README's "Known limitations": no live run, web search as the only
+  discovery (no job API in v2), LinkedIn and Indeed pages unreadable from a datacenter, an uncalibrated score.
+- **Not built, by design:** the application form, LinkedIn and X, calendar slots, the interview prep pack, project
+  ideas with a starter repo, the funded-startup lane.
 - **Nine deferred minor issues** at the end of `docs/ledger.md`, for example: a draft pressed Send before the daily
   run notices a hand-send can go out twice; a two-role email attaches only the clicked row's resume; "closed to new
   applicants after 30 Nov" on a live posting reads as closed.
@@ -167,5 +175,5 @@ All in `docs/ledger.md` with the reasoning. The ones a teammate should know:
 ## History
 
 Built 2026-11-02 and 03 from a written spec (`docs/spec.md`), test first, with one fresh-eyes review (two critical
-and seven important findings, all fixed) and a second pass after moving from contract v1 to v2. The v1 version is not
-in this repo.
+and seven important findings, all fixed) and a second pass after moving from contract v1 to v2. The search joined on
+2026-11-03 from Sid's repo at commit 1753f02. The v1 version is not in this repo.
