@@ -27,6 +27,12 @@ rules of the modules copied from signal-leads pinned here.
 `gravity validate` checks the manifest, compiles the lockfile, and checks that the code reads and writes only the
 names the manifest declares (`mail`, `page`, `send`, `draft`).
 
+`tests/dump_fixtures.py` is not a test: it runs the graph on the fakes and writes four results (prepared, replied,
+follow_ups, report) as JSON, the fixtures of the agent's page in Gravity's web app
+(`core/apps/web/app/components/agent-views/applyzer/fixtures`). Refresh them when the result's shape changes:
+`FIXTURES_OUT=<that folder> .venv\Scripts\python -m pytest -q tests/dump_fixtures.py`, then run that folder's
+`bun test`.
+
 ## 2. A real run against dev
 
 The agent is contract v2: the person picks the apps at setup. Locally, `gravity run` picks the defaults (Gmail, Exa)
