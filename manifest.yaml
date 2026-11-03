@@ -136,10 +136,9 @@ writes:
     same_as: send
   tracker:
     capability: row.upsert
+    default_app: googlesheets   # dev runs gravity-schema 0.13.10+: an optional default that needs a place is not filled in uninvited
     label: "A Google Sheet to keep every application in, one row each (optional)"
     required: false
-    # no default_app on purpose: the platform fills a default into every unpicked write and then asks for the
-    # spreadsheet it needs, so an optional sheet with a default cannot be left out (gravity-schema <= 0.13.9)
 
 approvals:
   required_for: [message.send]

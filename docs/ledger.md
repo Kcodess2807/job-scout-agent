@@ -81,6 +81,8 @@ Ruling: no `gravity.ask` in discover (`ask=None`): a missing role or years takes
 Ruling: his tests need UTF-8 as the default encoding (they read fixtures without one; the platform runs UTF-8): `PYTHONUTF8=1` for pytest on Windows.
 Seen: his engine sent no second-source traffic when `search_more`, `answers` and `similar` are not set up (the fake raises as the gateway would), and his `enrich` and evaluator treat a failing model as no model, so the demo's stand-in model runs the search code-only.
 Deferred: his `action-url` for a found job on a board copy may be the board's page, not the employer's form; his verification status is shown in the row's note.
+2026-11-03, later: dev's platform function runs gravity-schema 0.13.12 (core #661), which does not fill an optional default that needs a place, so the sheet's `default_app: googlesheets` is back in 0.6.1; pushed to dev with the seven real-run fixes (ready, awaiting submit).
+
 ## The first real run (2026-11-03, OpenRouter back; Arush's Gmail on dev's gateway)
 Seen: Prepare parsed the sample resume and GitHub in 20 model calls (2 min); a dead page was reported as needing the posting's text; the pasted posting was tailored with 0 lines dropped; the letter and the email read well and quoted only the resume; Send held at the gateway with recipient, subject and the resume file, refused -> a draft in Gmail, approved by Arush -> sent from his Gmail; follow-ups and the report ran; the real search found 5 fitting jobs in 197 s with reasons; picking one read the real posting and the company's pages (nobody named, so no address, as designed).
 Fix: an action run carries no resume text; Prepare now reuses the profile already in the notebook (it refused with "no resume").
