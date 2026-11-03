@@ -35,7 +35,7 @@ class Gravity:
     async def page(self, url: str) -> str:
         """The page's text, or "" when the app could not read it."""
         try:
-            got = await gravity.read("page", url=url)
+            got = await gravity.read("page", args={"url": url})
         except Exception:  # noqa: BLE001 - gravity.CallFailed: an unreadable page is an empty one
             return ""
         records = got.get("records") or []

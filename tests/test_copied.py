@@ -90,3 +90,17 @@ def test_a_v2_message_record_reads_as_the_same_record():
     assert (m["id"], m["thread"], m["subject"], m["text"]) == ("m1", "t1", "Re: Application", "Can we talk?")
     assert mail.address(m["from"]) == "priya@acme.com" and m["from"].startswith("Priya Nair")
     assert m["when"] == datetime(2026, 11, 2, 10, tzinfo=UTC)
+
+
+async def test_the_v2_page_read_passes_the_url_under_args_as_the_engine_maps_it(monkeypatch):
+    """gravity-connect renders web_page.get's URL from `{args.url}`: a read with url= as a bare keyword reads nothing."""
+    import tooling
+    calls = []
+
+    class G:
+        async def read(self, source, **kw):
+            calls.append((source, kw))
+            return {"records": [{"url": kw.get("args", {}).get("url"), "text": "the posting " * 50}]}
+    monkeypatch.setattr(tooling, "gravity", G())
+    text = await tooling.Gravity().page("https://acme.com/jobs/1")
+    assert calls == [("page", {"args": {"url": "https://acme.com/jobs/1"}})] and text.startswith("the posting")
