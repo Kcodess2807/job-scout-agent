@@ -459,3 +459,15 @@ def test_a_location_or_tech_the_resume_does_not_have_drops_the_entry():
     doc = _doc(["Built a reconciliation job in Go"])
     doc.sections[0].entries[0].tech = ["Go", "Rust"]
     assert tailor.grounded(doc, MASTER)[0].sections[0].entries[0].tech == ["Go"]      # an invented tool is dropped
+
+
+# ── the seam: a found job's domain is the company's, not its careers host ─────────────────────────
+def test_a_found_jobs_domain_is_the_companys_registrable_domain():
+    import discover
+    from models import Listing, Match, ScoutOutcome  # his, from src/scout
+    lst = Listing(key="careers:1", title="AI Backend Engineer", company="Zentrix", company_domain="careers.zentrix.ai",
+                  source="careers", source_url="https://careers.zentrix.ai/jobs/1", canonical_url="https://careers.zentrix.ai/jobs/1")
+    out = ScoutOutcome(requested_count=1, minimum_match_score=70, search_status="complete", jobs=[lst],
+                       matches={"careers:1": Match(score=80)})
+    [row] = discover.rows_of(out)
+    assert row["domain"] == "zentrix.ai" and row["url"] == "https://careers.zentrix.ai/jobs/1"

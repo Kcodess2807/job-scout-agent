@@ -103,6 +103,13 @@
   .row .spin { width: 14px; height: 14px; border: 2px solid var(--blue-tint); border-top-color: var(--blue); border-radius: 50%; animation: spin 700ms linear infinite; margin-top: 4px; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .outcome { margin-top: 12px; padding: 12px 14px; border-radius: 14px; background: var(--card); border: 1px solid var(--line); font-size: 15px; }
+  .next { margin-top: 10px; display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: 14px;
+          background: var(--blue-tint); border: 1px solid color-mix(in srgb, var(--blue) 30%, var(--line)); font-size: 15px; }
+  .next .step { font-size: 12.5px; color: var(--blue); font-weight: 600; letter-spacing: 0.02em; }
+  .next .txt { flex: 1; min-width: 0; } .next button { flex: none; min-height: 40px; padding: 8px 14px; }
+  .flow { display: flex; gap: 4px; margin: 14px 0 0; }
+  .flow span { flex: 1; height: 4px; border-radius: 4px; background: var(--line); }
+  .flow span.done { background: var(--blue); } .flow span.now { background: color-mix(in srgb, var(--blue) 45%, var(--line)); }
   .outcome.needs { background: var(--amber-tint); border-color: color-mix(in srgb, var(--amber) 35%, var(--line)); }
   .outcome ul { margin: 6px 0 0; padding-left: 18px; } .outcome li { margin: 4px 0; font-size: 14.5px; }
   .runbar { display: flex; gap: 8px; flex-wrap: wrap; margin: 14px 0 6px; }
@@ -184,7 +191,7 @@
     <div class="orch" id="orch">
       <div class="core" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3v4M12 17v4M3 12h4M17 12h4M5.6 5.6l2.8 2.8M15.6 15.6l2.8 2.8M18.4 5.6l-2.8 2.8M8.4 15.6l-2.8 2.8"/></svg></div>
       <div><div class="who">Orchestrator</div><div class="what" id="orchwhat">Waiting for you</div></div>
-      <button class="primary run" data-act="prepare">Prepare</button>
+      <button class="primary run" id="orch-go" data-act="prepare">Prepare</button>
     </div>
     <div class="spine" id="spine">
       <div class="pulse" id="pulse" aria-hidden="true"></div>
@@ -194,6 +201,8 @@
       <div class="stage" data-stage="track"><div class="name">Track</div><div class="cast">Sorts replies, drafts answers in the thread, follows up on a schedule</div><div class="rows"></div></div>
     </div>
     <div id="outcome" hidden></div>
+    <div class="flow" id="flow" aria-hidden="true"></div>
+    <div class="next" id="next" hidden><div class="txt"><div class="step" id="next-step"></div><div id="next-text"></div></div><button class="primary" id="next-go"></button></div>
     <div class="runbar">
       <button data-act="discover">Find jobs</button>
       <button data-act="check_replies">Check replies</button>
@@ -207,7 +216,7 @@
   <!-- Jobs -->
   <section class="panel" id="p-jobs" role="tabpanel" aria-labelledby="t-jobs">
     <h1 style="margin:6px 0 12px">Applications</h1>
-    <div id="apps"><p class="empty">Nothing yet. Press Prepare on the Live tab.</p></div>
+    <div id="apps"><p class="empty">Nothing yet. Press Find jobs on the Live tab, or paste jobs under Setup and press Prepare.</p></div>
   </section>
 
   <!-- Mail -->
@@ -230,7 +239,7 @@
       <div><label for="country">Country</label><input id="country"></div>
     </div>
     <label for="jobs">Jobs you already chose, one per line (leave empty to search)</label>
-    <textarea id="jobs" rows="5"></textarea>
+    <textarea id="jobs" rows="5" placeholder="Blacksmith | Backend Engineer | https://blacksmith.example/careers/backend | hiring@blacksmith.example&#10;https://nimbus.example/jobs/platform"></textarea>
     <label for="resume">Your resume, as text</label>
     <textarea id="resume" rows="10"></textarea>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
@@ -415,6 +424,7 @@ async function poll() {
       else { queue.push(...s.events); pump(); }
     }
     first = false; lastState = s; renderLive(s); renderLists(s);
+    if (s.running) { $("#next").hidden = true; }
     if (!playing) render(s);
     setTimeout(poll, s.running || queue.length ? 600 : 2200);
   } catch { setTimeout(poll, 3000); }
@@ -438,6 +448,34 @@ function renderLive(s) {
     $("#notice").value = s.inputs.notice_days ?? ""; $("#ctc").value = s.inputs.expected_ctc || "";
     $("#role").value = s.inputs.role || ""; $("#country").value = s.inputs.country || "";
   }
+}
+
+// the walk through the whole flow: what to press next, from where the board stands
+const STEPS = ["Find", "Pick", "Prepare", "Send", "Reply", "Follow up", "Report"];
+function nextStep(s) {
+  const rows = (s.result || {}).applications || [], st = rows.map(r => r.stage);
+  const has = re => st.some(x => re.test(x));
+  if (s.running) return null;
+  if (!rows.length) return {i: 0, text: "Find jobs that fit the resume (or paste jobs under Setup).", go: "Find jobs", act: "discover"};
+  if (has(/^found/) && !has(/^ready|emailed|draft|replied|applied|needs|email needs/)) return {i: 1, text: "Pick a found job: \"Prepare this one\" on the Jobs tab.", go: "Go to Jobs", tab: "jobs"};
+  if (has(/^to prepare/)) return {i: 2, text: "Pasted jobs are waiting to be prepared.", go: "Prepare", act: "prepare"};
+  if (has(/^ready to send/)) return {i: 3, text: "Send one, and approve it when the sheet comes up.", go: "Go to Jobs", tab: "jobs"};
+  if (has(/^needs the posting|^ready: no address/) && !has(/emailed|replied|applied/)) return {i: 3, text: "Paste the posting's text, or add an address to the job line under Setup. Or mark it \"I applied\".", go: "Go to Jobs", tab: "jobs"};
+  if (has(/emailed|applied/) && !has(/replied/)) return {i: 4, text: "Pretend the company replies (Jobs tab), or skip 4 days and run Follow-ups.", go: "Go to Jobs", tab: "jobs"};
+  if (has(/replied/)) return {i: 6, text: "Run the weekly report. Then try a reply of another kind, or +7 days and Follow-ups.", go: "Weekly report", act: "report"};
+  return {i: 2, text: "Prepare the jobs you picked.", go: "Prepare", act: "prepare"};
+}
+
+function renderNext(s) {
+  const n = nextStep(s), box = $("#next");
+  $("#flow").innerHTML = STEPS.map((_, i) => `<span class="${n && i < n.i ? "done" : n && i === n.i ? "now" : ""}"></span>`).join("");
+  box.hidden = !n;
+  if (!n) return;
+  $("#next-step").textContent = `Next: ${STEPS[n.i]}`; $("#next-text").textContent = n.text; $("#next-go").textContent = n.go;
+  $("#next-go").dataset.act = n.act || ""; $("#next-go").dataset.tab = n.tab || "";
+  const main = $("#orch-go");
+  if (n.act === "discover") { main.textContent = "Find jobs"; main.dataset.act = "discover"; }
+  else { main.textContent = "Prepare"; main.dataset.act = "prepare"; }
 }
 
 function pillClass(st) {
@@ -465,6 +503,7 @@ function render(s) {
   }
   $("#t-live").classList.toggle("badged", !!needs.length);
   renderLists(s);
+  renderNext(s);
 }
 
 function card(a, row, busy) {
@@ -530,7 +569,8 @@ document.addEventListener("click", async ev => {
   const b = ev.target.closest("button");
   if (!b || b.disabled) return;
   try {
-    if (b.dataset.tab) showTab(b.dataset.tab);
+    if (b.id === "next-go") { if (b.dataset.act) { await api("/api/run", {action: b.dataset.act}); showTab("live"); } else if (b.dataset.tab) showTab(b.dataset.tab); }
+    else if (b.dataset.tab) showTab(b.dataset.tab);
     else if (b.dataset.act) { await api("/api/run", {action: b.dataset.act}); showTab("live"); }
     else if (b.dataset.box) { box = b.dataset.box; $$("[data-box]").forEach(x => x.setAttribute("aria-pressed", x === b)); if (lastState) renderBox(lastState); }
     else if (b.dataset.do === "paste") { const p = $("#paste-" + b.dataset.row); p.hidden = !p.hidden; if (!p.hidden) $("textarea", p).focus(); }

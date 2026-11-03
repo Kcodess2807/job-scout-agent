@@ -2,28 +2,29 @@
 page. Any other link is fetched for real."""
 
 SAMPLE_RESUME = """Aditya Rao
-aditya@rao.dev | +91 98765 43210 | Bengaluru | https://github.com/adityarao
+aditya@rao.dev | +91 98765 43210 | Pune | https://github.com/adityarao
 
 SUMMARY
-Backend engineer with 3 years in Python and Go
+Backend and AI engineer with 3 years in Python, building LLM services and APIs
 
 EXPERIENCE
-Software Engineer | Razorpay | Bengaluru | Jul 2021 - Present
+Software Engineer | Razorpay | Pune | Jul 2021 - Present
 - Cut p95 latency 40% on the payouts API
-- Built a reconciliation job in Go that runs every night
-- Moved 30 services to Kubernetes with Docker and Terraform
+- Built a retrieval service in Python with FastAPI and LangChain serving 20,000 queries a day
+- Moved 30 services to Kubernetes with Docker on AWS
+- Designed prompt evaluation runs in Python over PostgreSQL
 
 PROJECTS
-Ledgerline | Go, Postgres
-- Built a double-entry ledger service in Go
+Ledgerline | Python, PostgreSQL, SQL
+- Built a double-entry ledger service with FastAPI
 - Handles 2,000 writes a second in tests
 
 EDUCATION
 B.Tech Computer Science | RV College of Engineering | 2021
 
 SKILLS
-Languages: Python, Go, SQL
-Tools: Postgres, Kubernetes, Docker, Terraform, Kafka
+Languages: Python, SQL, Go
+Tools: FastAPI, LangChain, PostgreSQL, Docker, Kubernetes, AWS, Git
 """
 
 SAMPLE_JOBS = """Blacksmith | Backend Engineer | https://blacksmith.example/careers/backend | hiring@blacksmith.example
@@ -44,7 +45,11 @@ _CLOSED = "This job has expired and is no longer accepting applications. See our
 _NIMBUS_TEAM = ("Our team. Priya Nair, Talent Partner, runs hiring for engineering at Nimbus. Sam Lee, Founder, started "
                 "Nimbus in 2019. Questions about a role go to priya@nimbus.example. ") * 4
 
+_ZENTRIX_TEAM = ("Our team. Meera Iyer, Talent Partner, runs hiring for engineering at Zentrix. Arjun Rao, CTO, leads "
+                 "the platform group. Write to meera@zentrix.ai about open roles. ") * 4
+
 PAGES = {
+    "https://zentrix.ai/team": _ZENTRIX_TEAM,     # a team page for one of the search's fixture companies, so a found job has someone to write to
     "https://blacksmith.example/careers/backend": _BLACKSMITH,
     "https://nimbus.example/jobs/platform": _NIMBUS,
     "https://nimbus.example/team": _NIMBUS_TEAM,

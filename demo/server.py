@@ -61,7 +61,7 @@ ME = "you@your-gmail.example"
 
 
 def _fresh() -> dict:
-    return {"inputs": {"jobs": samples.SAMPLE_JOBS, "resume_text": samples.SAMPLE_RESUME, "notice_days": 30,
+    return {"inputs": {"jobs": "", "resume_text": samples.SAMPLE_RESUME, "notice_days": 30,
                        "expected_ctc": "28 LPA", "work_auth": "can work there", "relocate": "yes",
                        "role": "AI engineer", "country": "India", "city": "Pune", "remote": "either", "count": "5",
                        "looking_for": "jobs", "employment_type": "any"},

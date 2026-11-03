@@ -22,6 +22,8 @@ from prefs import read_inputs  # noqa: E402
 from profile import build_profile, enrich  # noqa: E402
 from resume import load_resume  # noqa: E402
 
+from jobs import registrable  # noqa: E402  (careers.zentrix.ai -> zentrix.ai: the team page lives on the company's own host)
+
 HIS_SOURCES = {"jobs": "search", "pages": "page", "jobs_more": "search_more", "answers": "answers", "similar": "similar"}
 SEEN_KEPT = 400
 REJECTED_KEPT = 600       # postings found closed or unfit, remembered so the next runs skip them
@@ -79,7 +81,7 @@ def rows_of(outcome: ScoutOutcome) -> list[dict]:
             continue
         m = outcome.matches.get(lst.key)
         rows.append({"company": lst.company or "", "title": lst.title, "url": lst.application_url or lst.canonical_url,
-                     "domain": lst.company_domain, "location": lst.location,
+                     "domain": registrable(lst.company_domain) if lst.company_domain else None, "location": lst.location,
                      "description": (lst.description or lst.snippet or "")[:DESCRIPTION_CHARS], "hr_email": None,
                      "score": m.score if m else None, "why": reason_for(lst, m, {}) if m else "",
                      "verified": lst.verification.status, "posted": lst.posted_at, "picked": False})
