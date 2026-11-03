@@ -83,6 +83,15 @@ table in every result is the record.
 
 ---
 
+## How it shows on Gravity
+
+The explore page is drawn from the manifest and the result, not from anything the agent ships: the card is the name,
+the description and the apps' logos; the agent's page splits the description into steps (each clause that starts
+with a verb), lists the inputs by their labels, and draws a run's result by its shape. The result carries a
+`_layout` (`src/agent.py`, `LAYOUT`) the page honours: one card per job, the stage as a chip, what the run did to it
+in accent, the fit, who it goes to, the email and the cover letter readable before a send is approved, and a button
+to the posting. Older pages ignore `_layout` and draw the rows as a table.
+
 ## What is in the repo
 
 | Path | What |

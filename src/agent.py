@@ -97,6 +97,17 @@ def found_row(j: dict) -> dict:
             "company": j.get("company") or "", "title": j.get("title") or "", "url": j.get("url"), "fit_text": fit, "note": note}
 
 
+# How the platform's page draws the table (a `_layout` the page honours; older pages ignore it and draw the rows by
+# shape): one card per job, its stage as a chip, what this run did to it in accent, and the email and letter readable
+# before anyone approves a send. The posting opens from the card.
+LAYOUT = [{"type": "cards", "key": "applications", "caption": "Your applications", "title": "company", "subtitle": "role",
+           "accent": ["update"], "chips": ["stage"], "href": "apply_link",
+           "sections": [{"key": "fit", "label": "Fit"}, {"key": "contact", "label": "Who it goes to"},
+                        {"key": "email", "label": "The email"}, {"key": "cover_letter", "label": "Cover letter"},
+                        {"key": "note", "label": "Note"}],
+           "action": {"label": "Open the posting", "href": "apply_link"}}]
+
+
 def board(all_jobs: dict, apps: dict, pdfs: dict | None = None, updates: dict | None = None) -> tuple[list[dict], list[str]]:
     """(the table every result shows, its keys in row order): every job, in the order it arrived, with its application
     when it has one, so a row number means the same job in every result. It is the only table in any result: a
@@ -273,7 +284,7 @@ async def graph():
         if p is None:
             rows, keys = board(dict(store.collection("jobs").find(limit=5000)), apps)
             why = [*notes, *(getattr(model, "notes", None) or [])]  # a failed model call says why (a spent key, a budget)
-            return {"result": {"summary": "Nothing prepared: " + notes[0], "applications": rows, "could_not": why},
+            return {"result": {"summary": "Nothing prepared: " + notes[0], "applications": rows, "could_not": why, "_layout": LAYOUT},
                     "memory": {**notebook, "last_rows": keys}}
         projects = await load_projects(inputs, notes)
         all_jobs = dict(store.collection("jobs").find(limit=5000))
@@ -360,7 +371,7 @@ async def graph():
         """A result: what needs the candidate, as lines first, then the one table, with what this run did per row."""
         rows, keys = board(dict(store.collection("jobs").find(limit=5000)), dict(store.collection("applications").find(limit=5000)),
                            updates=updates)
-        result = {"summary": summary, **({"needs_you": needs} if needs else {}), "applications": rows, **(extra or {})}
+        result = {"summary": summary, **({"needs_you": needs} if needs else {}), "applications": rows, **(extra or {}), "_layout": LAYOUT}
         if notes := list(getattr(model, "notes", None) or []):  # a spent budget, a failed model call: why a field is blank
             result["could_not"] = [*(result.get("could_not") or []), *notes]
         return {"result": result, "memory": {**notebook, "last_rows": keys}}

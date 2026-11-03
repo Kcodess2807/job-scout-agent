@@ -1,7 +1,7 @@
 contract: v2
 name: applyzer
-version: 0.5.0
-description: "Finds live jobs that fit your resume, or takes the ones you chose, and for each tailors your resume and cover letter from your own facts, finds someone to write to, and sends only when you approve. Then it tracks replies and drafts follow-ups in your Gmail."
+version: 0.6.0
+description: "Finds live jobs that fit your resume, or takes the ones you paste. Tailors your resume and cover letter to each job from your own facts only and sends the application when you approve it, to a recruiter it finds on the company's own pages. Tracks replies in your inbox: drafts your answers, follows up when nobody writes back, and reports each week which emails get answered."
 
 kind: interactive
 
@@ -17,17 +17,17 @@ dependencies:
 inputs:
   - name: jobs
     type: textarea
-    label: "Jobs you already chose, one per line: a link to the posting, or Company | Role | link | hr@company.com. Leave it empty and I find jobs for you."
+    label: "Jobs you already chose, one per line: a link, or Company | Role | link | hr@company.com (empty: I find jobs for you)"
   - name: resume_file
     type: file
     label: "Your resume (PDF, Word or text)"
     accept: [pdf, docx, txt]
   - name: resume_text
     type: textarea
-    label: "Or paste your resume here"
+    label: "Or paste your resume"
   - name: github_username
     type: text
-    label: "Your GitHub username, so your projects can be matched to each job (optional)"
+    label: "GitHub username, to match your projects to each job (optional)"
   - name: looking_for
     type: static-dropdown
     label: "Jobs or internships?"
@@ -35,22 +35,22 @@ inputs:
     default: jobs
   - name: role
     type: text
-    label: "Which role? Leave blank to use the one your resume shows (e.g. data analyst, AI engineer)"
+    label: "Role to search for (blank: the one your resume shows)"
   - name: country
     type: text
-    label: "Which country?"
+    label: "Country"
     default: "India"
   - name: city
     type: text
-    label: "Which cities? Most preferred first (optional)"
+    label: "Cities, most preferred first (optional)"
   - name: remote
     type: static-dropdown
-    label: "Remote, on-site or either? (\"remote\" shows remote jobs only)"
+    label: "Remote, on-site or either?"
     options: [either, prefer remote, remote, on-site or hybrid]
     default: either
   - name: experience_years
     type: text
-    label: "Years of work experience, e.g. 0.5 or 2 (blank: read from your resume)"
+    label: "Years of experience (blank: from your resume)"
   - name: employment_type
     type: static-dropdown
     label: "Employment type"
@@ -58,20 +58,20 @@ inputs:
     default: any
   - name: count
     type: text
-    label: "How many jobs to find? 1 to 25"
+    label: "How many jobs to find (1 to 25)"
     default: "10"
   - name: min_salary
     type: text
-    label: "Minimum yearly salary, e.g. 600000 (optional; only checked when a posting states pay)"
+    label: "Minimum yearly salary (optional; checked when a posting states pay)"
   - name: notice_days
     type: number
     label: "Notice period, in days"
   - name: current_ctc
     type: text
-    label: "Current pay (optional; used only when a posting or recruiter asks)"
+    label: "Current pay (optional; shared only when a recruiter asks)"
   - name: expected_ctc
     type: text
-    label: "Expected pay (optional; used only when a posting or recruiter asks)"
+    label: "Expected pay (optional; shared only when a recruiter asks)"
   - name: work_auth
     type: static-dropdown
     label: "Can you work where these jobs are?"
@@ -162,7 +162,7 @@ actions:
     inputs:
       - name: text
         type: textarea
-        label: "The posting's text, for a page I couldn't read"
+        label: "The posting's text"
   - name: send_email
     label: "Send"
     per_row: true
@@ -172,7 +172,7 @@ actions:
     inputs:
       - name: applied_on
         type: date
-        label: "When did you apply? Leave it for today."
+        label: "When did you apply? (blank: today)"
   - name: not_applying
     label: "Not applying"
     per_row: true

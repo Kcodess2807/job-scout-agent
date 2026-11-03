@@ -607,12 +607,23 @@ async def test_i3_an_old_email_to_the_same_address_is_not_taken_for_the_kept_dra
     assert store.collection("applications").get("b")["stage"] == "draft_kept"
 
 
+async def test_every_result_tells_the_page_how_to_draw_its_table(wired):
+    """`_layout` names the one table and draws each row as a card; the platform's page honours it, older pages ignore it."""
+    wired(fu_tools(), {})
+    out = await run({"memory": MEMORY, "inputs": {}, "actions": ["report"]})
+    [layout] = out["result"]["_layout"]
+    assert (layout["type"], layout["key"], layout["title"]) == ("cards", "applications", "company")
+    assert {s["key"] for s in layout["sections"]} <= set(agent.board({}, {"k": {"key": "k", "stage": "docs_ready", "order": "1"}})[0][0])
+    out = await run({"memory": {}, "inputs": {"jobs": "https://acme.com/jobs/1"}})   # no resume: the early return
+    assert out["result"]["_layout"] == agent.LAYOUT
+
+
 async def test_i5_every_result_has_one_table(wired):
     memory, c = await prepared(wired)
     wired(sending(lambda a: {"id": "m1", "threadId": "t1"}), c)
     out = await run({"inputs": {}, "memory": memory, "actions": ["send_email"], "action_inputs": {"rows": ["1"]}})
-    tables = [k for k, v in out["result"].items() if isinstance(v, list) and v and isinstance(v[0], dict)]
-    assert tables == ["applications"]
+    tables = [k for k, v in out["result"].items() if isinstance(v, list) and v and isinstance(v[0], dict) and not k.startswith("_")]
+    assert tables == ["applications"]   # _layout says how to draw it; it is not a table
 
 
 async def test_i6_the_day_7_note_goes_only_to_an_address_that_came_with_the_job(wired):
