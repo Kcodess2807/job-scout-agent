@@ -14,6 +14,9 @@ $env:PYTHONUTF8="1"; $env:GRAVITY_RUN_TOKEN="t"; $env:GRAVITY_LLM_URL="http://x"
 `PYTHONUTF8=1` is for Windows: the search's tests read their fixtures without naming an encoding, as the platform
 (UTF-8) lets them. `uv pip install pyyaml` once for them.
 
+The tests run on fakes even with the platform SDK installed in `.venv` (it is, for `gravity run`): `tests/conftest.py`
+puts it out of the way for every test, so memory is an in-process dict and nothing can reach a gateway.
+
 `tests/test_logic.py` covers the rules: job rows and keys, the resume parser's shape, the GitHub sync, the facts
 check, the PDFs, the email checks, the contact order, the send gate, reply matching and sorting, the answer bank,
 the follow-up cadence. `tests/test_graph.py` drives the whole graph with fake tools and a fake model: prepare,
