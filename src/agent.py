@@ -127,7 +127,8 @@ def board(all_jobs: dict, apps: dict, pdfs: dict | None = None, updates: dict | 
                "apply_link": a.get("apply_url") or a.get("url") or "",
                "email": f"{e['subject']}\n\n{e['body']}" if e.get("body") else "",
                "email_problems": "; ".join(e.get("problems") or []), "lines_dropped": a.get("lines_dropped", 0),
-               "cover_letter": a.get("letter") or "", "note": a.get("note") or "",
+               "cover_letter": a.get("letter") or "", "letter_problems": "; ".join(a.get("letter_problems") or []),
+               "note": a.get("note") or "",
                "update": (updates or {}).get(a["key"], "")}
         if pdfs and a["key"] in pdfs:
             row.update(pdfs[a["key"]])
@@ -731,8 +732,18 @@ async def graph():
     async def discover(state: State):
         inputs, notebook = state.get("inputs") or {}, dict(state.get("memory") or {})
 
+        dead: dict[str, str] = {}  # an optional source the person skipped or whose app needs reconnecting: told once, not per query
+
         async def read(source: str, **args):
-            return await io.read(finder.HIS_SOURCES[source], **args)
+            name = finder.HIS_SOURCES[source]
+            if name in dead:
+                raise RuntimeError(dead[name])
+            try:
+                return await io.read(name, **args)
+            except Exception as e:  # noqa: BLE001 - gravity.CallFailed: his engine treats a failing channel as off
+                if any(w in str(e) for w in ("NEEDS_RECONNECT", "has no sources.", "NOT_GRANTED")):
+                    dead[name] = str(e)[:200]
+                raise
         got = await finder.search(inputs, notebook.get("scout") or {}, read=read, model=model, embed=make_embedder())
         if got["error"]:
             return with_board(got["error"], notebook)

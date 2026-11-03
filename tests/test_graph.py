@@ -624,6 +624,7 @@ async def test_i5_every_result_has_one_table(wired):
     out = await run({"inputs": {}, "memory": memory, "actions": ["send_email"], "action_inputs": {"rows": ["1"]}})
     tables = [k for k, v in out["result"].items() if isinstance(v, list) and v and isinstance(v[0], dict) and not k.startswith("_")]
     assert tables == ["applications"]   # _layout says how to draw it; it is not a table
+    assert "letter_problems" in out["result"]["applications"][0]   # what the letter check found, beside the letter
 
 
 async def test_i6_the_day_7_note_goes_only_to_an_address_that_came_with_the_job(wired):
@@ -760,3 +761,21 @@ async def test_an_action_run_without_the_resume_uses_the_profile_already_known(w
                      "action_inputs": {"rows": ["1"], "text": POSTING}})
     assert out["result"]["applications"][0]["stage"] == "ready to send"
     assert not any("no resume" in x for x in out["result"].get("could_not") or [])
+
+
+async def test_an_optional_search_source_that_is_not_connected_is_asked_once(wired, monkeypatch):
+    """Seen on the first real search: Exa (search_more, optional) wasn't connected, and the engine asked the gateway
+    for it eight times, five seconds each. The first refusal stands for the run."""
+    calls = []
+
+    class Io(FakeIo):
+        async def read(self, source, **args):
+            calls.append(source)
+            if source == "search_more":
+                raise RuntimeError("NEEDS_RECONNECT: Exa isn't connected for this consumer")
+            return await super().read(source, **args)
+    t, model = wired(search_tools(), canned())
+    monkeypatch.setattr(agent, "make_io", lambda: Io(t))
+    out = await run({"inputs": SEARCH_INPUTS, "memory": {}, "actions": ["discover"]})
+    assert calls.count("search_more") <= 1
+    assert out["result"]["applications"]

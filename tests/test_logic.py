@@ -516,3 +516,6 @@ def test_a_must_have_matches_the_resume_under_its_other_name():
     req = tailor.Requirements(company="Acme", title="SRE", must_have=["Postgres", "K8s", "Go", "Kafka"])
     assert tailor.skill_match(req, "PostgreSQL, Kubernetes and Go at Razorpay") == (["Postgres", "K8s", "Go"], ["Kafka"])
     assert tailor.skill_match(tailor.Requirements(company="Acme", title="SRE", must_have=["PostgreSQL"]), "ran postgres in prod") == (["PostgreSQL"], [])
+    # a real posting (Aries, 2026-11-03) listed "Go (Golang)", "SQL/NoSQL", "AWS/GCP/Azure": any one alternate meets it
+    req2 = tailor.Requirements(company="Aries", title="Dev", must_have=["Go (Golang)", "SQL/NoSQL", "AWS/GCP/Azure", "Distributed systems"])
+    assert tailor.skill_match(req2, "Go, PostgreSQL and SQL on AWS") == (["Go (Golang)", "SQL/NoSQL", "AWS/GCP/Azure"], ["Distributed systems"])

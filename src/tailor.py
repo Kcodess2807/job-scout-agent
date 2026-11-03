@@ -36,7 +36,9 @@ CLOSED = re.compile(r"\b(no longer (accepting|available)|position (has been )?fi
 class Requirements(BaseModel):
     company: str = Field("", description="the hiring company's name, as the posting gives it")
     title: str = Field("", description="the role's title, as the posting gives it")
-    must_have: list[str] = Field([], description="skills or tools the posting requires, each 1-3 words")
+    must_have: list[str] = Field([], description="the named languages, frameworks, tools, databases, clouds, degrees or years the "
+                                                 "posting requires, each 1-3 words, as written ('Go (Golang)', 'SQL/NoSQL'); never a "
+                                                 "duty or an area like 'backend services', 'APIs' or 'distributed systems', which go in keywords")
     nice_to_have: list[str] = Field([], description="skills or tools it says are a plus")
     keywords: list[str] = Field([], description="up to 10 phrases the posting repeats about the work itself")
     seniority: str = ""
@@ -196,9 +198,13 @@ def is_closed(text: str) -> bool:
 
 
 def _has_skill(skill: str, text: str) -> bool:
-    """The skill under any of its names: "Postgres" in a posting is the resume's "PostgreSQL", "K8s" its "Kubernetes"."""
-    low = skill.lower()
-    names = {low, ALIASES.get(low, low)} | {short for short, long in ALIASES.items() if long == low}
+    """The skill under any of its names: "Postgres" in a posting is the resume's "PostgreSQL", "K8s" its "Kubernetes".
+    A posting's alternates count as one: "Go (Golang)", "SQL/NoSQL", "AWS/GCP/Azure" are met by any one of them."""
+    names: set[str] = set()
+    for part in re.split(r"\s*/\s*|\s*\(|\)\s*|\s+or\s+", skill.lower()):
+        part = part.strip(" ,")
+        if part:
+            names |= {part, ALIASES.get(part, part)} | {short for short, long in ALIASES.items() if long == part}
     return any(_has(n, text) for n in names)
 
 
