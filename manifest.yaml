@@ -1,6 +1,6 @@
 contract: v2
 name: applyzer
-version: 0.4.0
+version: 0.5.0
 description: "Finds live jobs that fit your resume, or takes the ones you chose, and for each tailors your resume and cover letter from your own facts, finds someone to write to, and sends only when you approve. Then it tracks replies and drafts follow-ups in your Gmail."
 
 kind: interactive
@@ -97,9 +97,10 @@ built_ins: [hunter.find_email, hunter.verify_email]
 
 sources:
   mail:
-    capability: message.search
+    capability: message.list
     label: "Your email, where companies answer your applications"
     same_as: send
+    window: 30d      # the farthest back any run looks (an application closes at 21 days); the mailbox (inbox, sent) is named per read
   page:
     capability: web_page.get
     default_app: composio_search

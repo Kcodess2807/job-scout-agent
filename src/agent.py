@@ -323,13 +323,15 @@ async def graph():
 
     async def hand_sent(apps: dict, only: set[str] | None, now: datetime) -> tuple[dict, dict]:
         """Kept drafts the candidate sent themselves: found in Sent after the draft was kept, their edit measured.
-        (changed, updates) for them and the roles that shared the email. v2's message records name no recipients,
-        so Sent is searched per address; `only` limits it to the applications a run is about."""
+        (changed, updates) for them and the roles that shared the email. Sent is read once (the manifest's 30-day
+        window) and each kept draft's address picked out of the records' recipients; `only` limits it to the
+        applications a run is about."""
         changed, updates = {}, {}
         kept = {(a.get("email") or {}).get("to"): a for a in apps.values()
                 if a.get("stage") == "draft_kept" and (a.get("email") or {}).get("to") and (only is None or a["key"] in only)}
+        sent = list(reversed(await io.mail("sent"))) if kept else []  # newest first
         for to, a in kept.items():
-            for m in reversed(await io.mail(f"in:sent to:{to} newer_than:30d")):  # newest first
+            for m in (m for m in sent if to.lower() in (m["to"] or "").lower()):
                 if a["key"] in changed:
                     break
                 since = a.get("draft_kept_at")
@@ -515,7 +517,11 @@ async def graph():
         coll = store.collection("applications")
         apps = dict(coll.find(limit=5000))
         event = (inputs.get("event") or {}).get("emails")
-        inbox = mail.messages(event) if event else await io.mail("in:inbox newer_than:2d")
+        if event:
+            inbox = mail.messages(event)
+        else:  # by hand: the last two days of the inbox
+            since = utcnow() - timedelta(days=2)
+            inbox = [m for m in await io.mail("inbox") if (m["when"] or since) >= since]
         needs, drafted, changed, updates = [], 0, {}, {}
         for m in inbox:
             current = {k: changed.get(k, x) for k, x in apps.items()}
@@ -594,7 +600,7 @@ async def graph():
         pending = {a["thread"]: a for a in apps.values() if a.get("thread")
                    and any(not d.get("sent_at") for d in a.get("follow_up_drafts") or [])}
         if pending:
-            for m in await io.mail("in:sent newer_than:30d"):
+            for m in await io.mail("sent"):
                 a = pending.get(m["thread"])
                 if not a:
                     continue
@@ -625,7 +631,7 @@ async def graph():
                 to = c.get("email") or e.get("to")
             if a.get("thread"):  # pre-flight: anyone but the candidate in the thread since the send wrote back
                 if inbox is None:  # one read for every application due today
-                    inbox = await io.mail("in:inbox newer_than:30d")
+                    inbox = await io.mail("inbox")
                 thread = [m for m in inbox if m["thread"] == a["thread"]]
                 since = datetime.fromisoformat(a["sent_at"])
                 # the candidate's own address: their resume's, and whoever sent what was in the thread by the send

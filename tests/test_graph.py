@@ -47,8 +47,9 @@ class FakeIo:
         rs = (got or {}).get("results") or []
         return (rs[0].get("text") or "") if rs else ""
 
-    async def mail(self, text):
-        return mail.messages(self._tool("gmail_read")({"query": text}))
+    async def mail(self, folder):
+        """The `mail` source by standard folder; the fake endpoint still sees it as a query ("in:sent")."""
+        return mail.messages(self._tool("gmail_read")({"query": f"in:{folder}", "folder": folder}))
 
     HIS = {"search": "jobs", "page": "pages", "search_more": "jobs_more", "answers": "answers", "similar": "similar"}
 

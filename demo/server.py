@@ -139,14 +139,9 @@ class DemoIo:
         company's pages or not at all."""
         return {}
 
-    async def mail(self, query: str) -> list[dict]:
-        emit("tool", "mail", "start", f"searching: {query}")
-        box = STATE["mailbox"]
-        if query.startswith("in:sent"):
-            to = (re.search(r"to:(\S+)", query) or [None, ""])[1].lower()
-            found = [m for m in box["sent"] if not to or m["to"].lower() == to]
-        else:
-            found = box["inbox"]
+    async def mail(self, folder: str) -> list[dict]:
+        emit("tool", "mail", "start", f"reading {folder}")
+        found = STATE["mailbox"]["sent" if folder == "sent" else "inbox"]
         emit("tool", "mail", "end", f"{len(found)} message{'s' if len(found) != 1 else ''}")
         return mail.messages(found)
 

@@ -13,7 +13,7 @@ if gravity is not None and not hasattr(gravity, "memory"):  # an unrelated PyPI 
 
 
 class Gravity:
-    """The contract v2 calls this agent makes, by its manifest's names: sources `mail` (message.search) and `page`
+    """The contract v2 calls this agent makes, by its manifest's names: sources `mail` (message.list) and `page`
     (web_page.get), writes `send` (message.send, approved by the person) and `draft` (message.create). The person
     picked the apps at setup; records come back in the shapes' own fields."""
 
@@ -46,10 +46,12 @@ class Gravity:
         similar). A source the person did not set up raises, which the engine treats as that channel being off."""
         return await gravity.read(source, **args)
 
-    async def mail(self, text: str) -> list[dict]:
-        """Messages matching a search (Gmail's syntax: in:inbox newer_than:2d), as mail.messages records."""
+    async def mail(self, folder: str) -> list[dict]:
+        """The messages of one standard mailbox ("inbox" or "sent") inside the manifest's window (30 days), oldest
+        first, as mail.messages records. The same words on Gmail and Outlook (the shape's `folder` filter, gravity-schema
+        0.13.8); anything narrower (an address, a thread, a day) is the caller's to pick out of the records."""
         import mail
-        return mail.messages(await gravity.read("mail", filters={"text": text}))
+        return mail.messages(await gravity.read("mail", filters={"folder": folder}))
 
     async def send(self, to: str, subject: str, text: str, file: dict | None = None) -> dict:
         """{"id", "thread"} once sent; {"rejected": True} when the person said no or nobody answered. Raises

@@ -69,11 +69,11 @@ PDFs are never stored; they are re-rendered from the JSON when needed.
 
 | Name | Capability | Default app | Picked by the person at setup |
 |---|---|---|---|
-| source `mail` | `message.search` | same account as `send` | |
+| source `mail` | `message.list`, 30-day window, the mailbox (inbox, sent) named per read | same account as `send` | |
 | source `page` | `web_page.get` | Composio Search | Exa, Firecrawl, Tavily or Composio Search |
 | source `search` | `web_result.search` | Composio Search | any web search |
 | sources `search_more`, `answers`, `similar` (optional) | a second search, an AI web search, "more like this" | Exa, Composio Search | skipped quietly when not set up |
-| write `send` | `message.send`, under approvals | Gmail | Gmail or Outlook |
+| write `send` | `message.send`, under approvals | Gmail | Gmail or Outlook: the code never names either |
 | write `draft` | `message.create` | same as `send` | |
 | write `tracker` (optional) | `row.upsert` | Google Sheets | their own spreadsheet, or Notion |
 
@@ -161,8 +161,10 @@ All in `docs/ledger.md` with the reasoning. The ones a teammate should know:
 - **No run against dev yet.** Everything is tested with fakes and the demo's stand-in model. The first real run will
   find what fakes can't: Gmail's real records, run time, whether the mail trigger, per-row buttons and memory
   collections behave for a v2 agent on dev, and the sheet's first write into an empty spreadsheet.
-- **The attachment needs the platform.** gravity-schema 0.13.7 (gravity-cli PR #46, released 2026-11-03) lets a v2
-  Gmail send, draft or reply carry a file. Dev's gateway has to pick it up; until then a send goes without the resume.
+- **Two things need the platform.** gravity-schema 0.13.7 (gravity-cli PR #46, released 2026-11-03) lets a v2 Gmail
+  send, draft or reply carry a file; 0.13.8 (gravity-cli PR, 2026-11-03) adds the `folder` filter the mail reads use
+  (inbox, sent: the same words on Gmail and Outlook) and the attachment on Outlook. Dev's gateway has to pick them
+  up; until then a send goes without the resume and a mail read is not narrowed to its mailbox.
 - **The real model has never run the prompts.** Read ten tailored resumes and letters before trusting them.
 - **The search has its own unknowns**, in his README's "Known limitations": no live run, web search as the only
   discovery (no job API in v2), LinkedIn and Indeed pages unreadable from a datacenter, an uncalibrated score.

@@ -37,7 +37,10 @@ gravity connect exa            # or firecrawl / tavily, then add --use page=fire
 ```
 
 Before a send carries the resume, Gravity's dev gateway needs gravity-schema 0.13.7 (gravity-cli PR #46: Gmail's
-send, draft and reply take the file). Until then a send goes without the attachment.
+send, draft and reply take the file), and 0.13.8 for the mail reads (`filters.folder`: inbox or sent, the same on
+Gmail and Outlook) and for the attachment on Outlook. Until then a send goes without the attachment, and a mail
+read comes back unnarrowed (the gateway says so in `warnings`; the code picks what it needs out of the records).
+To test on Outlook: `gravity connect outlook`, then `--use send=outlook` on each run (mail and draft follow send).
 
 Under `gravity run`, memory collections are kept in `.gravity/memory/` (`gravity memory show applications`), and
 each run's PDFs are written to `.gravity/applications/`. `gravity memory clear` starts over.

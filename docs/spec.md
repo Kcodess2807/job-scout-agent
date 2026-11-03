@@ -34,7 +34,7 @@ Anti-goals (a failure even if it "works")
 ## 3. Constraints
 
 - Gravity contract v2 (changed from v1 on 2026-11-02; the v1 version is in `.v1/`). The person picks the apps at
-  setup. Sources: `mail` (message.search, the same account as `send`) and `page` (web_page.get: Exa, Firecrawl,
+  setup. Sources: `mail` (message.list, 30-day window, inbox or sent per read, the same account as `send`) and `page` (web_page.get: Exa, Firecrawl,
   Tavily or Composio Search). Writes: `send` (message.send, under `approvals.required_for`) and `draft`
   (message.create). No Hunter: v2 has no address finder. A scheduled run cannot wait on approval, so ticks draft,
   never send.
@@ -147,7 +147,7 @@ shorter note with one new angle, day 10 two lines, day 21 closed with no email; 
 thread (the day-4 or day-10 note mentions the application) and counts toward the three touches. Without a thread
 (applied by form only): once, day 7, a draft to `hr_email` when there is one, else a `needs_you` line saying there is
 no address to follow up with. Before each draft the thread is fetched and a human reply found there goes to
-`needs_you` instead. Stops: any reply, bounce, suppressed, or three touches. A kept draft the candidate sent by hand is found in `in:sent newer_than:30d` and counted as sent.
+`needs_you` instead. Stops: any reply, bounce, suppressed, or three touches. A kept draft the candidate sent by hand is found in Sent (the `mail` source, `folder: sent`) and counted as sent.
 
 `report` (schedule `0 9 * * 1`). Counts by stage and by reply kind, sends this week, replies this week.
 
@@ -200,6 +200,16 @@ two above: my default), the `needs_you` ordering, the Exa fallback when the comp
 - The weekly report adds `by_email_kind` (sent, replied, median days to a reply, for application emails and notes to
   a person) and `follow_ups.replies_after_one`: the numbers behind "which first email works" and "do follow-ups
   help", which decide whether follow-ups stay drafts.
+
+## 15. The same code on every mail app, 2026-11-03
+
+Arush: the point of v2 is that the person picks the apps, so nothing may assume Gmail. The agent read mail with Gmail's
+query syntax (`in:sent to:x newer_than:30d`), which Outlook does not understand. Now `mail` is message.list with a
+30-day window and each read names a standard mailbox, `filters.folder`: inbox or sent, added to the message shape in
+gravity-schema 0.13.8 and mapped on Gmail (labels) and Outlook (folders); records carry `to`, so a kept draft's
+address is picked out of Sent in code. Outlook's send, draft and reply carry the agent's file from 0.13.8 as well.
+What still differs per app is the platform's: Outlook's send of a new email returns no thread (a follow-up to it
+cannot be threaded), and Outlook's search mapping is unverified live.
 
 ## 13. The search, 2026-11-03
 

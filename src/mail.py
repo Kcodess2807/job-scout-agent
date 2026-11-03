@@ -43,11 +43,20 @@ def messages(data: Any) -> list[dict]:
                                                     if author.get("email") else "")
         thread = m.get("threadId") or m.get("thread_id") or m.get("thread")
         out.append({"id": m.get("messageId") or m.get("id"), "thread": thread.get("id") if isinstance(thread, dict) else thread,
-                    "from": frm, "to": m.get("to") if isinstance(m.get("to"), str) else "",
+                    "from": frm, "to": to_header(m.get("to")),
                     "subject": m.get("subject") or "", "text": m.get("messageText") or m.get("text") or "",
                     "when": when(m.get("messageTimestamp") or m.get("date") or m.get("time")),
                     "labels": [str(x) for x in m.get("labelIds") or m.get("labels") or []]})
     return sorted(out, key=lambda x: x["when"] or datetime.min.replace(tzinfo=UTC))
+
+
+def to_header(v: Any) -> str:
+    """The recipients as one header-like string: from a string, or from contract v2's list of {name, email} refs."""
+    if isinstance(v, str):
+        return v
+    if isinstance(v, list):
+        return ", ".join((x.get("email") or "") if isinstance(x, dict) else str(x) for x in v if x)
+    return ""
 
 
 def when(value: Any) -> datetime | None:
