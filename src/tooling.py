@@ -128,7 +128,7 @@ class Model:
         return self.llm.with_structured_output(schema)
 
 
-def make_model(max_tokens: int = 1500) -> Model:
+def make_model(max_tokens: int = 4000) -> Model:  # 1500 cut a cover letter off on the first real run (a reasoning model spends part of it)
     from langchain_openai import ChatOpenAI
 
     return Model(ChatOpenAI(model="openai/gpt-6-luna", base_url=os.environ["GRAVITY_LLM_URL"],

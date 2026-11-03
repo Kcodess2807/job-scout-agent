@@ -509,3 +509,10 @@ def test_a_found_jobs_domain_is_the_companys_registrable_domain():
                        matches={"careers:1": Match(score=80)})
     [row] = discover.rows_of(out)
     assert row["domain"] == "zentrix.ai" and row["url"] == "https://careers.zentrix.ai/jobs/1"
+
+
+def test_a_must_have_matches_the_resume_under_its_other_name():
+    """First real run: the posting said Postgres, the resume PostgreSQL, and the fit said "missing Postgres"."""
+    req = tailor.Requirements(company="Acme", title="SRE", must_have=["Postgres", "K8s", "Go", "Kafka"])
+    assert tailor.skill_match(req, "PostgreSQL, Kubernetes and Go at Razorpay") == (["Postgres", "K8s", "Go"], ["Kafka"])
+    assert tailor.skill_match(tailor.Requirements(company="Acme", title="SRE", must_have=["PostgreSQL"]), "ran postgres in prod") == (["PostgreSQL"], [])

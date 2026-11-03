@@ -195,9 +195,16 @@ def is_closed(text: str) -> bool:
     return CLOSED.search(text or "") is not None
 
 
+def _has_skill(skill: str, text: str) -> bool:
+    """The skill under any of its names: "Postgres" in a posting is the resume's "PostgreSQL", "K8s" its "Kubernetes"."""
+    low = skill.lower()
+    names = {low, ALIASES.get(low, low)} | {short for short, long in ALIASES.items() if long == low}
+    return any(_has(n, text) for n in names)
+
+
 def skill_match(req: Requirements, source: str) -> tuple[list[str], list[str]]:
     """(the must-haves the resume shows, the ones it doesn't), in the posting's order."""
-    matched = [s for s in req.must_have if _has(s, source)]
+    matched = [s for s in req.must_have if _has_skill(s, source)]
     return matched, [s for s in req.must_have if s not in matched]
 
 
