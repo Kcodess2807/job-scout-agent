@@ -749,3 +749,14 @@ async def test_a_run_with_job_links_still_prepares_without_searching(wired):
     out = await run({"inputs": {**SEARCH_INPUTS, "jobs": "Blacksmith | Backend Engineer | https://blacksmith.sh/careers/be | hr@blacksmith.sh",
                                 "resume_text": RESUME}})
     assert out["result"]["applications"][0]["stage"] == "ready to send" and not t["search"].calls
+
+
+async def test_an_action_run_without_the_resume_uses_the_profile_already_known(wired):
+    """Found on the first real run: `paste_posting` carries no resume text (an action run), and Prepare refused with
+    "no resume" although the profile from the first run was in the notebook."""
+    memory, c = await prepared(wired, jobs="Blacksmith | Backend Engineer | https://www.linkedin.com/jobs/view/1 | hr@blacksmith.sh")
+    t, _ = wired({"web_fetch": page_fetch(PAGES), **gmail_none()}, c)
+    out = await run({"inputs": {}, "memory": memory, "actions": ["paste_posting"],
+                     "action_inputs": {"rows": ["1"], "text": POSTING}})
+    assert out["result"]["applications"][0]["stage"] == "ready to send"
+    assert not any("no resume" in x for x in out["result"].get("could_not") or [])

@@ -182,6 +182,8 @@ async def graph():
         """Parsed once per resume text (its hash is kept); a new resume is parsed again."""
         text, _ = await candidate.resume_text(inputs.get("resume_file"), inputs.get("resume_text"))
         if not text:
+            if notebook.get("profile"):  # an action run (paste the posting, pick) carries no resume: the last one given stands
+                return Profile(**notebook["profile"])
             notes.append("no resume: upload it or paste it, and run again")
             return None
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:16]
