@@ -92,14 +92,6 @@ def make_model(max_tokens: int = 1500) -> Model:
                             api_key=os.environ["GRAVITY_RUN_TOKEN"], max_tokens=max_tokens, max_retries=2))
 
 
-async def ask(question: str, options: list[str], default: str) -> str:
-    """A card the person answers mid-run (gravity.ask pauses the run); a run nobody watches, and a local run, get
-    the default."""
-    if gravity:
-        return await gravity.ask(question, options=options, default=default)
-    return default
-
-
 BUDGET_NOTE = "the run's budget ran out, so the model stopped reading pages and drafting; what code found is shown"
 
 
