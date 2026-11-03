@@ -272,7 +272,8 @@ async def graph():
         apps = dict(apps_coll.find(limit=5000))
         if p is None:
             rows, keys = board(dict(store.collection("jobs").find(limit=5000)), apps)
-            return {"result": {"summary": "Nothing prepared: " + notes[0], "applications": rows, "could_not": notes},
+            why = [*notes, *(getattr(model, "notes", None) or [])]  # a failed model call says why (a spent key, a budget)
+            return {"result": {"summary": "Nothing prepared: " + notes[0], "applications": rows, "could_not": why},
                     "memory": {**notebook, "last_rows": keys}}
         projects = await load_projects(inputs, notes)
         all_jobs = dict(store.collection("jobs").find(limit=5000))
@@ -360,6 +361,8 @@ async def graph():
         rows, keys = board(dict(store.collection("jobs").find(limit=5000)), dict(store.collection("applications").find(limit=5000)),
                            updates=updates)
         result = {"summary": summary, **({"needs_you": needs} if needs else {}), "applications": rows, **(extra or {})}
+        if notes := list(getattr(model, "notes", None) or []):  # a spent budget, a failed model call: why a field is blank
+            result["could_not"] = [*(result.get("could_not") or []), *notes]
         return {"result": result, "memory": {**notebook, "last_rows": keys}}
 
     # ── send_email: three nodes, as signal-leads. draft (everything that needs no approval: the checks, the caps,

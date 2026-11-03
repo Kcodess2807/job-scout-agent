@@ -145,13 +145,13 @@ async def structured(model, schema, system: str, user: str):
         return await model.with_structured_output(schema).ainvoke(
             [{"role": "system", "content": system}, {"role": "user", "content": user}])
     except Exception as e:  # noqa: BLE001 - the caller falls back to code or leaves the field blank
-        if "BUDGET_EXCEEDED" in str(e):
-            notes = getattr(model, "notes", None)
-            if notes is None:
-                try:
-                    model.notes = notes = []
-                except Exception:  # noqa: BLE001 - a model object that takes no attributes: the note is lost
-                    notes = []
-            if BUDGET_NOTE not in notes:
-                notes.append(BUDGET_NOTE)
+        notes = getattr(model, "notes", None)
+        if notes is None:
+            try:
+                model.notes = notes = []
+            except Exception:  # noqa: BLE001 - a model object that takes no attributes: the note is lost
+                notes = []
+        note = BUDGET_NOTE if "BUDGET_EXCEEDED" in str(e) else f"a model call failed ({type(e).__name__}): {str(e)[:200]}"
+        if note not in notes:
+            notes.append(note)   # the result's could_not says why a field is blank, once per reason
         return None
