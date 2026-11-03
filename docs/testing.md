@@ -39,6 +39,11 @@ gravity connect gmail
 gravity connect exa            # or firecrawl / tavily, then add --use page=firecrawl to each run
 ```
 
+Composio Search (the default page reader and job search) needs no account: nothing to connect. A local run fills
+every unpicked source and write with its default app, the optional sheet included, so add `--use tracker=none` to
+each run unless you have a sheet to name (`--use tracker=googlesheets:spreadsheet=<id>`); gravity-cli 0.13.9 takes
+`none`.
+
 Before a send carries the resume, Gravity's dev gateway needs gravity-schema 0.13.7 (gravity-cli PR #46: Gmail's
 send, draft and reply take the file), and 0.13.8 for the mail reads (`filters.folder`: inbox or sent, the same on
 Gmail and Outlook) and for the attachment on Outlook. Until then a send goes without the attachment, and a mail
