@@ -248,7 +248,7 @@ async def test_an_address_on_the_posting_is_used_but_never_a_noreply(monkeypatch
     c = await outreach.find_contact(_call(log), None, {"domain": "acme.com"}, req)
     assert (c["email"], c["how"], c["kind"]) == ("jobs@acme.com", "on the posting", "application")
 
-    async def team(page, model, d, personas, company=""):
+    async def team(page, model, d, personas, company="", **kw):
         return {"name": "Priya Nair", "title": "Talent Partner", "email": "priya@acme.com", "tier": "verified",
                 "email_source": "provider", "sendable": True}
     monkeypatch.setattr(research, "contact", team)
@@ -412,6 +412,44 @@ class _People:
                     name="Priya Nair", title="Talent Partner", url="https://acme.com/team",
                     quote="Priya Nair, Talent Partner, runs hiring for engineering at Acme")])
         return B()
+
+
+async def test_hunter_gives_a_named_person_their_address_when_the_page_prints_none():
+    async def no_address(url):
+        return TEAM.replace("priya@acme.com or ", "") if url == "https://acme.com/team" else ""
+    asked = []
+
+    async def hunter(first, last, domain):
+        asked.append((first, last, domain))
+        return {"email": "priya.nair@acme.com", "status": "valid"}
+    c = await research.contact(no_address, _People(), "acme.com", outreach.PERSONAS, "Acme", find=hunter)
+    assert asked == [("Priya", "Nair", "acme.com")]
+    assert (c["email"], c["email_source"], c["tier"]) == ("priya.nair@acme.com", "hunter", "verified")
+
+    async def nothing(first, last, domain):
+        return {}
+    c = await research.contact(no_address, _People(), "acme.com", outreach.PERSONAS, "Acme", find=nothing)
+    assert not c.get("email") and c["note"].endswith("or from Hunter")
+
+    async def page(url):   # a printed address wins; Hunter is not asked
+        return TEAM if url == "https://acme.com/team" else ""
+    c = await research.contact(page, _People(), "acme.com", outreach.PERSONAS, "Acme", find=hunter)
+    assert c["email"] == "priya@acme.com" and len(asked) == 1
+
+
+def test_hunters_answer_is_read_wherever_it_nests_and_an_invalid_address_is_dropped():
+    import tooling
+    assert tooling._dig({"successful": True, "data": {"data": {"email": "a@b.co", "score": 91}}}, "email") == "a@b.co"
+    assert tooling._dig({"data": {"result": "undeliverable", "status": "invalid"}}, "status") == "invalid"
+    assert tooling._dig({"data": {"emails": []}}, "email") is None
+
+
+def test_a_status_update_is_told_apart_from_a_receipt_and_from_a_question():
+    m = {"from": "Acme <no-reply@greenhouse-mail.io>", "subject": "Your application", "text": ""}
+    assert replies.rule_kind({**m, "text": "Your application has been reviewed by the team and moved to the next stage."}) == "status_update"
+    assert replies.rule_kind({**m, "text": "Thank you for applying. We have received your application."}) == "auto_ack"
+    assert replies.rule_kind({**m, "text": "Your application is under review. Could you confirm your notice period?"}) is None
+    assert replies.rule_kind({**m, "text": "Your application was reviewed. Unfortunately we are not moving forward."}) is None
 
 
 async def test_without_hunter_a_contact_needs_an_address_printed_on_the_companys_own_pages():

@@ -61,9 +61,9 @@ PEOPLE_SYSTEM = ("You read a company's team or about page and list the people it
                  "names and titles exactly. Leave out anyone the page does not name.")
 
 
-async def contact(page, model, d: str, personas: list[str], company: str = "") -> dict:
-    """The person matching a persona, named on a page the company controls, and their address only when one of
-    those pages prints it (no address finder runs under contract v2)."""
+async def contact(page, model, d: str, personas: list[str], company: str = "", find=None) -> dict:
+    """The person matching a persona, named on a page the company controls, and their address: printed on one of
+    those pages, else from `find(first, last, domain) -> {email, status}` (Hunter, through Gravity) when given."""
     pages = await read_pages(page, [f"https://{d}{p}" for p in ("/team", "/about", "/about-us", "/company", "/people", "/leadership")], 12000)
     out = await structured(model, People, PEOPLE_SYSTEM, "\n\n".join(f"PAGE {u}\n{t}" for u, t in pages.items())) if pages else None
     people = [p for p in (out.people if out else []) if quote_on_page(p.quote, pages.get(p.url, ""))]
@@ -77,7 +77,11 @@ async def contact(page, model, d: str, personas: list[str], company: str = "") -
     mine = [e for e in seen if e.split("@")[0].lower() in (first.lower(), f"{first}.{rest[-1] if rest else ''}".lower())]
     if mine:
         return {**who, "email": mine[0].lower(), "email_source": "published", "tier": "published", "sendable": True}
-    return {**who, "note": "no address for them on the company's pages"}
+    found = await find(first, rest[-1], d) if find and rest else {}
+    if found.get("email"):
+        return {**who, "email": found["email"], "email_source": "hunter", "status": found.get("status"),
+                "tier": "verified" if found.get("status") == "valid" else "found", "sendable": True}
+    return {**who, "note": "no address for them on the company's pages" + (" or from Hunter" if find and rest else "")}
 
 
 def now() -> datetime:

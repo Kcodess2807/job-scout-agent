@@ -186,6 +186,21 @@ two above: my default), the `needs_you` ordering, the Exa fallback when the comp
 - `demo/`: a local page (phone-friendly) that runs the graph with a pretend mailbox and sheet, approvals as a sheet you
   tap, a clock to skip ahead, and the orchestrator and its parts lighting up as they run (`docs/testing.md` §3).
 
+## 14. Applying and tracking, refined 2026-11-03
+
+- A person named on the company's pages without a printed address gets one from Hunter (`built_ins: hunter.find_email,
+  hunter.verify_email`, Gravity's account): valid or accept_all is used, risky is used and said so, invalid is dropped.
+  A printed address still wins, and nobody is invented: no name on the page, no lookup.
+- Send on a kept draft checks Sent first (the same check the daily run does, one function): a draft the candidate
+  sent from Gmail is recorded as theirs, its edit measured, and is never sent twice.
+- `status_update`: an ATS mail saying the application moved or is under review (rule first, the model otherwise) is
+  recorded on the row (`last_reply`, `last_status_at`), is not urgent, and gets no reply.
+- A follow-up is written with what was already sent to that company in front of the model, so it adds one new
+  thing; the second one asks whether the role is still open.
+- The weekly report adds `by_email_kind` (sent, replied, median days to a reply, for application emails and notes to
+  a person) and `follow_ups.replies_after_one`: the numbers behind "which first email works" and "do follow-ups
+  help", which decide whether follow-ups stay drafts.
+
 ## 13. The search, 2026-11-03
 
 Steps 1 to 5 arrived as Sid's `jobs-scout` and now run inside this graph as the `discover` action (`src/discover.py`

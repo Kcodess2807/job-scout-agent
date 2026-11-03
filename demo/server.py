@@ -134,6 +134,11 @@ class DemoIo:
                 return {"records": [{"url": url, "text": text}] if text else [], "complete": True, "warnings": []}
         raise RuntimeError(f"this run has no sources.{source}")
 
+    async def find_email(self, first: str, last: str, domain: str) -> dict:
+        """The Hunter built-ins: not in the demo (nothing leaves the machine), so a person's address comes from the
+        company's pages or not at all."""
+        return {}
+
     async def mail(self, query: str) -> list[dict]:
         emit("tool", "mail", "start", f"searching: {query}")
         box = STATE["mailbox"]

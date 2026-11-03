@@ -13,6 +13,7 @@ import base64
 import hashlib
 import os
 import re
+import statistics
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, TypedDict
@@ -224,7 +225,7 @@ async def graph():
             return {**app, "company": req.company, "title": req.title, "stage": "needs_text",
                     "note": "the resume couldn't be tailored this run; run Prepare again"}
         letter, letter_problems = await tailor.cover_letter(model, p, req, source)
-        contact = await outreach.find_contact(io.page, model, row, req)
+        contact = await outreach.find_contact(io.page, model, row, req, find=io.find_email)
         matched, gaps = tailor.skill_match(req, source)
         return {**app, "company": req.company, "title": req.title, "stage": "docs_ready", "req": req.model_dump(),
                 "resume": doc.model_dump(), "lines_dropped": dropped, "letter": letter, "letter_problems": letter_problems,
@@ -320,6 +321,30 @@ async def graph():
                   "_offer": ["send_email", "paste_posting", "mark_applied", "not_applying", "check_replies"]}
         return {"result": result, "memory": {**notebook, "last_rows": keys}}
 
+    async def hand_sent(apps: dict, only: set[str] | None, now: datetime) -> tuple[dict, dict]:
+        """Kept drafts the candidate sent themselves: found in Sent after the draft was kept, their edit measured.
+        (changed, updates) for them and the roles that shared the email. v2's message records name no recipients,
+        so Sent is searched per address; `only` limits it to the applications a run is about."""
+        changed, updates = {}, {}
+        kept = {(a.get("email") or {}).get("to"): a for a in apps.values()
+                if a.get("stage") == "draft_kept" and (a.get("email") or {}).get("to") and (only is None or a["key"] in only)}
+        for to, a in kept.items():
+            for m in reversed(await io.mail(f"in:sent to:{to} newer_than:30d")):  # newest first
+                if a["key"] in changed:
+                    break
+                since = a.get("draft_kept_at")
+                if since and (m["when"] or now) < datetime.fromisoformat(since) - timedelta(minutes=5):
+                    continue  # an email to that address from before the draft: not this one
+                ratio = mail.edit_ratio(a.get("draft_text", ""), m["text"])
+                mates = [b for b in apps.values() if a.get("group") and b.get("group") == a["group"]
+                         and b.get("stage") == "draft_kept"] or [a]
+                for b in mates:
+                    changed[b["key"]] = {**b, "stage": "sent", "sent_by": "you", "thread": m["thread"],
+                                         "sent_at": (m["when"] or now).isoformat(), "edit_ratio": ratio,
+                                         "sent_text": mail.typed_text(m["text"])[:2000], "follow_ups": 0}
+                    updates[b["key"]] = f"you sent it yourself ({mail.edited_words(ratio)} edited)"
+        return changed, updates
+
     async def sheet(apps: list[dict], stage: str | None = None) -> list[str]:
         """The changed applications to the person's sheet, when they set one up; what went wrong, as a note."""
         if not apps:
@@ -349,12 +374,19 @@ async def graph():
                        if a.get("sent_by") == "gravity" and str(a.get("sent_at", "")).startswith(today)}
         sent_today = max((notebook.get("sent_today") or {}).get(today, 0), len(sent_groups))
         picked = [apps[k] for k in picked_keys(state) if k in apps]
+        already, already_why = await hand_sent(apps, {a["key"] for a in picked}, now)
+        for k, a in already.items():
+            store.put_safely(store.collection("applications"), k, a)
+            apps[k] = a
         suppressed = set(store.collection("suppressed").has_many([a["domain"] for a in picked if a.get("domain")]))
         entries, done_groups, to_send = [], set(), 0
         for a in picked:
             if a.get("group") and a["group"] in done_groups:
                 continue
             row = {"company": a.get("company") or "", "roles": a.get("title") or "", "keys": [a["key"]], "note": ""}
+            if a["key"] in already:
+                entries.append({**row, "status": "skipped", "why": f"not sent again: {already_why[a['key']]}"})
+                continue
             if a.get("stage") not in ("docs_ready", "draft_kept"):
                 entries.append({**row, "status": "skipped", "why": f"it is {stage_label(a)}"})
                 continue
@@ -502,8 +534,10 @@ async def graph():
                 r = await replies.classify(model, m)
                 kind, question = (r.kind, r.question) if r else ("other", "")
             line, draft_note = None, ""
-            if kind == "auto_ack":
+            if kind in ("auto_ack", "status_update"):
                 upd["acknowledged"] = True
+                if kind == "status_update":
+                    upd.update({"last_reply": words[:300], "last_status_at": utcnow().isoformat()})
             elif kind in ("opt_out", "not_hiring", "bounce"):
                 upd.update({"stage": "done", "reply_kind": kind, "last_reply": words[:300]})
                 if kind != "bounce" and a.get("domain"):
@@ -553,24 +587,8 @@ async def graph():
         p = Profile(**notebook.get("profile") or {})
         coll = store.collection("applications")
         apps = dict(coll.find(limit=5000))
-        changed, needs, updates, drafts, inbox = {}, [], {}, 0, None
-        kept = {(a.get("email") or {}).get("to"): a for a in apps.values()
-                if a.get("stage") == "draft_kept" and (a.get("email") or {}).get("to")}
-        for to, a in kept.items():  # v2's message records name no recipients, so Sent is searched per address
-            for m in reversed(await io.mail(f"in:sent to:{to} newer_than:30d")):  # newest first
-                if a["key"] in changed:
-                    break
-                since = a.get("draft_kept_at")
-                if since and (m["when"] or now) < datetime.fromisoformat(since) - timedelta(minutes=5):
-                    continue  # an email to that address from before the draft: not this one
-                ratio = mail.edit_ratio(a.get("draft_text", ""), m["text"])
-                mates = [b for b in apps.values() if a.get("group") and b.get("group") == a["group"]
-                         and b.get("stage") == "draft_kept"] or [a]
-                for b in mates:
-                    changed[b["key"]] = {**b, "stage": "sent", "sent_by": "you", "thread": m["thread"],
-                                         "sent_at": (m["when"] or now).isoformat(), "edit_ratio": ratio,
-                                         "sent_text": mail.typed_text(m["text"])[:2000], "follow_ups": 0}
-                    updates[b["key"]] = f"you sent it yourself ({mail.edited_words(ratio)} edited)"
+        needs, drafts, inbox = [], 0, None
+        changed, updates = await hand_sent(apps, None, now)
         # follow-up drafts the candidate sent from Gmail: matched in Sent by thread, after the draft, their edit measured.
         # This is the number behind "keep drafting, or let them go out on their own".
         pending = {a["thread"]: a for a in apps.values() if a.get("thread")
@@ -627,8 +645,9 @@ async def graph():
                 needs.append(f"{head}: you applied a week ago and no address came with the job to follow up with.")
                 continue
             days = (now - datetime.fromisoformat(a.get("sent_at") or f"{a['applied_on']}T00:00:00+00:00")).days
+            earlier = "\n\n".join([a.get("sent_text") or e.get("body") or "", *(d["text"] for d in a.get("follow_up_drafts") or [])])
             body, problems = await outreach.follow_up(model, n, p, a.get("company") or "", a.get("title") or "", days,
-                                                      candidate.master_text(p), p.links, applied=what == "applied")
+                                                      candidate.master_text(p), p.links, applied=what == "applied", earlier=earlier.strip())
             if problems or not body:
                 needs.append(f"{head}: the follow-up draft failed a check ({'; '.join(problems)}); write it yourself.")
                 continue
@@ -657,12 +676,34 @@ async def graph():
         fu = [d for a in apps for d in a.get("follow_up_drafts") or []]
         fu_sent = [d for d in fu if d.get("sent_at")]
         unchanged = sum(d.get("edit_ratio", 1) < 0.05 for d in fu_sent)
+        # replies that came after a follow-up the candidate sent: the number behind "do follow-ups work"
+        after = sum(bool(a.get("replied_at")) and any(d.get("sent_at") and d["sent_at"] < a["replied_at"]
+                                                      for d in a.get("follow_up_drafts") or []) for a in apps)
+        # by the kind of first email (application to the job's address, or a note to a person found), over all time
+        kinds: dict[str, dict] = {}
+        for a in apps:
+            k = (a.get("email") or {}).get("kind")
+            if k and a.get("sent_at"):
+                d = kinds.setdefault(k, {"sent": 0, "replied": 0, "days": []})
+                d["sent"] += 1
+                if a.get("replied_at"):
+                    d["replied"] += 1
+                    d["days"].append((datetime.fromisoformat(a["replied_at"]) - datetime.fromisoformat(a["sent_at"])).days)
+        by_kind = {k: {"sent": d["sent"], "replied": d["replied"],
+                       "median_days_to_reply": statistics.median(d["days"]) if d["days"] else None} for k, d in sorted(kinds.items())}
         summary = f"{sent} sent and {answered} repl{'ies' if answered != 1 else 'y'} this week."
+        if by_kind:
+            summary += " Answered so far: " + ", ".join(
+                f"{d['replied']} of {d['sent']} {'application emails' if k == 'application' else 'notes to a person'}"
+                + (f" (about {d['median_days_to_reply']:g} days to a reply)" if d["median_days_to_reply"] is not None else "")
+                for k, d in by_kind.items()) + "."
         if fu:
-            summary += f" {len(fu_sent)} of {len(fu)} follow-up drafts sent by you, {unchanged} unchanged."
+            summary += f" {len(fu_sent)} of {len(fu)} follow-up drafts sent by you, {unchanged} unchanged, {after} answered after one."
         return with_board(summary, state.get("memory") or {},
                           extra={"sent_this_week": sent, "replies_this_week": answered, "by_stage": dict(sorted(by_stage.items())),
-                                 "follow_ups": {"drafted": len(fu), "sent_by_you": len(fu_sent), "sent_unchanged": unchanged}})
+                                 "by_email_kind": by_kind,
+                                 "follow_ups": {"drafted": len(fu), "sent_by_you": len(fu_sent), "sent_unchanged": unchanged,
+                                                "replies_after_one": after}})
 
     # ── discover: the vendored search, writing found jobs through the seam; pick: the person's choice -> prepare ──
     async def discover(state: State):

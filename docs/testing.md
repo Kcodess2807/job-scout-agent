@@ -55,9 +55,11 @@ in another, one per line: a bare link, or `Company | Role | link | hr@company.co
 | Send | `gravity run --action send_email --action-input rows=1` and answer the approval `y` or `n` | the row's `update`: sent, or kept as a draft and why; with `y` the email in your Sent with the resume attached; with `n` the draft in Gmail. Use a job whose address is yours for a first try |
 | I applied | `gravity run --action mark_applied --action-input rows=2` | the row says "applied" |
 | Not applying | `gravity run --action not_applying --action-input rows=3` then Prepare again | the row is gone and stays gone |
-| Check replies | answer your own test email from another address in the same thread, then `gravity run --action check_replies` | `needs_you` lines first, a reply draft in the thread, the row's `update` |
-| Follow-ups | `gravity run --action follow_ups` (a day-4 note needs `sent_at` 4 days back: edit `.gravity/memory/applications.json`) | drafts in the threads; the row's `update` says "you sent it yourself" for a kept draft you sent |
-| Weekly report | `gravity run --action report` | counts by stage, this week's sends and replies |
+| Check replies | answer your own test email from another address in the same thread, then `gravity run --action check_replies` | `needs_you` lines first, a reply draft in the thread, the row's `update`. An ATS mail saying the application moved or is under review shows as `status update` on the row and asks nothing |
+| Follow-ups | `gravity run --action follow_ups` (a day-4 note needs `sent_at` 4 days back: edit `.gravity/memory/applications.json`) | drafts in the threads, each adding something the first email didn't say; the row's `update` says "you sent it yourself" for a kept draft you sent |
+| Send a kept draft you already sent | send a kept draft yourself from Gmail, then `gravity run --action send_email --action-input rows=<n>` | no approval opens; the row says "not sent again: you sent it yourself" |
+| A found person's address | prepare a job whose company has a team page but prints no addresses | the contact says "found by Hunter, valid" (or accept_all / risky), or "nobody found" with why |
+| Weekly report | `gravity run --action report` | counts by stage, this week's sends and replies, `by_email_kind` (answered and median days to a reply, application emails against notes), `follow_ups.replies_after_one` |
 
 ## What is expected to be blank
 

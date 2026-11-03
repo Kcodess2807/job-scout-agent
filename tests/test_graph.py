@@ -60,6 +60,12 @@ class FakeIo:
         web = self._tool(source)({"source": source})
         return await web(self.HIS[source], **args)
 
+    async def find_email(self, first, last, domain):
+        """The Hunter built-ins: {} when the test set none up (the manifest's built-ins off), else its answer."""
+        if "hunter" not in self.t:
+            return {}
+        return self._tool("hunter")({"first_name": first, "last_name": last, "domain": domain}) or {}
+
     async def send(self, to, subject, text, file=None):
         got = self._tool("gmail_send")({"recipient_email": to, "subject": subject, "body": text, "is_html": False,
                                         **({"attachment": file} if file else {})})
@@ -518,13 +524,43 @@ async def test_day_21_closes_quietly_and_a_form_application_gets_one_note_or_a_l
 
 async def test_the_weekly_report_counts_by_stage_and_by_reply(wired):
     wired(fu_tools(), {})
-    put_app("a", stage="sent", sent_at=ago(2))
-    put_app("b", stage="replied", reply_kind="interview", sent_at=ago(5), replied_at=ago(1))
-    put_app("c", stage="done", reply_kind="rejection", sent_at=ago(20), replied_at=ago(10))
+    put_app("a", stage="sent", sent_at=ago(2), email={"kind": "note"})
+    put_app("b", stage="replied", reply_kind="interview", sent_at=ago(5), replied_at=ago(1), email={"kind": "application"},
+            follow_up_drafts=[{"n": 1, "at": ago(3), "text": "x", "sent_at": ago(2)}])
+    put_app("c", stage="done", reply_kind="rejection", sent_at=ago(20), replied_at=ago(10), email={"kind": "application"})
     out = await run({"memory": MEMORY, "inputs": {}, "actions": ["report"]})
     r = out["result"]
     assert r["sent_this_week"] == 2 and r["replies_this_week"] == 1
     assert r["by_stage"] == {"emailed": 1, "replied: interview": 1, "closed": 1}
+    assert r["by_email_kind"] == {"application": {"sent": 2, "replied": 2, "median_days_to_reply": 7},
+                                  "note": {"sent": 1, "replied": 0, "median_days_to_reply": None}}
+    assert r["follow_ups"]["replies_after_one"] == 1 and "2 of 2 application emails (about 7 days to a reply)" in r["summary"]
+
+
+async def test_a_status_update_from_the_ats_is_recorded_and_asks_nothing_of_you(wired):
+    memory, c = await sent_and_applied(wired)
+    t, model = wired(inbox_tools(), c)
+    out = await run({"memory": memory, "inputs": event({"from": "Acme Careers <no-reply@greenhouse-mail.io>", "subject": "Your application at Acme",
+                                                        "text": "Hello Aditya, your application at Acme has been reviewed by the hiring team and moved to the next stage."})})
+    assert not out["result"].get("needs_you") and t["gmail_draft"].calls == [] and model.calls == []
+    app = store.collection("applications").get("acme.com/jobs/pe")
+    assert app["acknowledged"] and app["stage"] == "applied" and "moved to the next stage" in app["last_reply"]
+    assert [r["update"] for r in out["result"]["applications"] if r["company"] == "Acme"] == ["status update"]
+
+
+async def test_a_kept_draft_the_candidate_already_sent_from_gmail_is_not_sent_again(wired):
+    memory, c = await prepared(wired)
+    wired(sending(lambda a: "APPROVAL_REJECTED: the person said no"), c)
+    out = await run({"inputs": {}, "memory": memory, "actions": ["send_email"], "action_inputs": {"rows": ["1"]}})
+    sent = [{"messageId": "s1", "threadId": "t7", "sender": "aditya@rao.dev", "to": "hr@blacksmith.sh",
+             "messageText": "Hi there, I applied with a few edits", "messageTimestamp": agent.utcnow().isoformat()}]
+    t, _ = wired({**sending(lambda a: pytest.fail("already sent by hand: must not go again")),
+                  "gmail_read": lambda a: {"messages": sent if "in:sent" in a["query"] else []}}, c)
+    out = await run({"inputs": {}, "memory": out["memory"], "actions": ["send_email"], "action_inputs": {"rows": ["1"]}})
+    app = store.collection("applications").get("blacksmith.sh/careers/be")
+    assert (app["stage"], app["sent_by"], app["thread"]) == ("sent", "you", "t7")
+    assert out["result"]["applications"][0]["update"].startswith("skipped: not sent again: you sent it yourself")
+    assert t["gmail_draft"].calls == []
 
 
 # ── final review fixes ───────────────────────────────────────────────────────────────────────────────
@@ -648,7 +684,7 @@ async def test_the_weekly_report_counts_follow_ups_drafted_sent_and_unchanged(wi
     put_app("b", company="Acme", stage="sent", sent_at=ago(6), follow_ups=1,
             follow_up_drafts=[{"n": 1, "at": ago(2), "text": "z", "sent_at": ago(1), "edit_ratio": 0.3}])
     out = await run({"memory": MEMORY, "inputs": {}, "actions": ["report"]})
-    assert out["result"]["follow_ups"] == {"drafted": 3, "sent_by_you": 2, "sent_unchanged": 1}
+    assert out["result"]["follow_ups"] == {"drafted": 3, "sent_by_you": 2, "sent_unchanged": 1, "replies_after_one": 0}
     assert "2 of 3 follow-up drafts sent" in out["result"]["summary"]
 
 

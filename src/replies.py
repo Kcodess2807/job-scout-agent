@@ -20,14 +20,17 @@ ACK = re.compile(r"we('ve| have) received your application|thank(s| you) for (ap
                  r"application (has been )?(received|submitted)", re.I)
 NOT_ACK = re.compile(r"unfortunately|regret|not (be )?moving forward|other candidates|interview|assessment|"
                      r"next steps?|schedule|availability|offer", re.I)
-KINDS = ("interview", "oa", "offer", "rejection", "not_hiring", "question", "auto_ack", "other")
+STATUS = re.compile(r"(application|candidacy|profile)\b[^.?\n]{0,40}\b(under review|in review|being reviewed|reviewed by|"
+                    r"shortlisted|moved to|progressed to|forwarded to)|status of your application|application status", re.I)
+KINDS = ("interview", "oa", "offer", "rejection", "not_hiring", "question", "auto_ack", "status_update", "other")
 NEEDS_YOU = ("offer", "interview", "oa", "question", "other", "bounce")  # most urgent first
 
 
 class Reading(BaseModel):
     kind: str = Field(description="interview (they want to talk or meet) | oa (an online assessment or take-home) | "
                                   "offer | rejection | not_hiring (they are not hiring for it at all) | question (they ask "
-                                  "the candidate something) | auto_ack (an automatic receipt) | other")
+                                  "the candidate something) | auto_ack (an automatic receipt) | status_update (the application moved a "
+                                  "stage or is under review; nothing is asked and no meeting is proposed) | other")
     confidence: float = Field(description="0 to 1")
     their_words: str = Field(description="the sentence in the email that shows it, copied exactly")
     question: str = Field("", description="for a question: the question, copied exactly")
@@ -76,6 +79,8 @@ def rule_kind(m: dict) -> str | None:
     text = f"{m['subject']}\n{mail.typed_text(m['text'])}"
     if ACK.search(text) and not NOT_ACK.search(text):
         return "auto_ack"
+    if STATUS.search(text) and not NOT_ACK.search(text) and "?" not in mail.typed_text(m["text"]):
+        return "status_update"
     return None
 
 

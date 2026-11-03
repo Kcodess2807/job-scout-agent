@@ -65,11 +65,40 @@ class Gravity:
         record = got.get("record") or {}
         return {"id": record.get("id"), "thread": record.get("thread")}
 
+    async def find_email(self, first: str, last: str, domain: str) -> dict:
+        """{email, status} for a person at a company, from the `hunter.find_email` and `hunter.verify_email` built-ins
+        (Gravity's account): {} when nothing was found, the address is invalid, or the built-ins are off. status: valid,
+        accept_all, risky or unknown."""
+        try:
+            email = _dig(await gravity.built_in("hunter.find_email", domain=domain, first_name=first, last_name=last), "email")
+            if not isinstance(email, str) or "@" not in email:
+                return {}
+            status = _dig(await gravity.built_in("hunter.verify_email", email=email), "status")
+        except Exception:  # noqa: BLE001 - gravity.CallFailed: the built-in is not in this run, or Hunter failed
+            return {}
+        status = str(status or "unknown").lower()
+        return {} if status == "invalid" else {"email": email.lower(), "status": status}
+
     async def draft(self, to: str, subject: str, text: str, thread: str | None = None, file: dict | None = None) -> dict:
         """A draft in the person's mailbox, in `thread` when given."""
         draft = {"to": [to], "subject": subject, "text": text, **({"thread": thread} if thread else {})}
         got = await gravity.act("draft", draft=draft, **({"file": file} if file else {}))
         return got.get("record") or {}
+
+
+def _dig(obj, key: str):
+    """The first value under `key` anywhere in a nested answer (Hunter's comes wrapped in `data`)."""
+    if isinstance(obj, dict):
+        if key in obj and not isinstance(obj[key], (dict, list)):
+            return obj[key]
+        for v in obj.values():
+            if (got := _dig(v, key)) is not None:
+                return got
+    elif isinstance(obj, list):
+        for v in obj:
+            if (got := _dig(v, key)) is not None:
+                return got
+    return None
 
 
 def make_embedder():
