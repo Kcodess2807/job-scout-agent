@@ -711,6 +711,17 @@ async def test_replies_and_follow_ups_say_so_when_nothing_has_been_sent_yet(wire
     assert len(out["result"]["applications"]) == 1                                   # the board still shows
 
 
+def test_a_typed_message_naming_a_job_on_the_board_picks_that_row():
+    store._LOCAL.clear()
+    jobs = store.collection("jobs")
+    jobs.put("a", {"key": "a", "title": "Backend Engineer", "company": "Blacksmith"})
+    jobs.put("b", {"key": "b", "title": "Platform Engineer", "company": "Acme"})
+    mem = {"last_rows": ["a", "b"]}
+    assert agent.picked_keys({"memory": mem, "inputs": {"message": "send one to Backend Engineer · Blacksmith"}}) == ["a"]
+    assert agent.picked_keys({"memory": mem, "inputs": {"message": "the acme one"}}) == []          # a company alone names no row
+    assert agent.picked_keys({"memory": mem, "inputs": {"message": "Backend Engineer · Blacksmith"}, "action_inputs": {"rows": ["2"]}}) == ["b"]
+
+
 async def test_the_weekly_report_counts_follow_ups_drafted_sent_and_unchanged(wired):
     wired(fu_tools(), {})
     put_app("a", stage="sent", sent_at=ago(9), follow_ups=2,

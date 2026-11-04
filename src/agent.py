@@ -58,10 +58,23 @@ def utcnow() -> datetime:
 
 
 def picked_keys(state: State) -> list[str]:
-    """The applications behind the rows the person selected (numbers against the table every result shows)."""
+    """The applications behind the rows the person selected (numbers against the table every result shows), or, when
+    they typed instead, the rows their message names: the row's title and company both in the text, as the page
+    writes a row ("Backend Engineer · Blacksmith")."""
     last = (state.get("memory") or {}).get("last_rows") or []
     rows = [int(r) for r in (state.get("action_inputs") or {}).get("rows") or [] if str(r).isdigit()]
-    return [last[r - 1] for r in rows if 0 < r <= len(last)]
+    if rows:
+        return [last[r - 1] for r in rows if 0 < r <= len(last)]
+    said = ((state.get("inputs") or {}).get("message") or "").lower()
+    if not said.strip():
+        return []
+    jobs, apps = store.collection("jobs"), store.collection("applications")
+
+    def named(k: str) -> bool:
+        j = jobs.get(k) or apps.get(k) or {}
+        title, company = (j.get("title") or "").lower(), (j.get("company") or "").lower()
+        return bool(title and company and title in said and company in said)
+    return [k for k in last if named(k)]
 
 
 def contact_line(c: dict) -> str:
@@ -841,6 +854,8 @@ async def graph():
             return "check_replies"
         first = (state.get("actions") or ["prepare"])[0]
         if first == "prepare" and not (inputs.get("jobs") or "").strip():
+            if picked_keys(state):
+                return "pick"   # a typed message naming a job on the board: that one is picked, then prepared
             # nothing pasted: prepare what was picked, else go and find jobs
             apps = set(k for k, _ in store.collection("applications").find(limit=store.FIND_CAP))
             waiting = any(j.get("picked", True) and k not in apps for k, j in store.collection("jobs").find(limit=store.FIND_CAP))
