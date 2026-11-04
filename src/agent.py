@@ -107,6 +107,9 @@ LAYOUT = [{"type": "cards", "key": "applications", "caption": "Your applications
                         {"key": "note", "label": "Note"}],
            "action": {"label": "Open the posting", "href": "apply_link"}}]
 
+# An application that went out, by Gravity or by hand: the only ones a reply or a follow-up can be about.
+SENT_STAGES = ("sent", "applied", "replied", "closed", "done")
+
 
 def latest_draft(a: dict) -> dict | None:
     """The draft the agent kept that still waits for the person: a reply to their last mail, else the newest follow-up
@@ -548,6 +551,8 @@ async def graph():
         p = Profile(**notebook.get("profile") or {})
         coll = store.collection("applications")
         apps = dict(coll.find(limit=store.FIND_CAP))
+        if not any(a.get("stage") in SENT_STAGES for a in apps.values()):
+            return with_board("No application has been sent yet, so there are no replies to check.", notebook)
         event = (inputs.get("event") or {}).get("emails")
         if event:
             inbox = mail.messages(event)
@@ -702,7 +707,9 @@ async def graph():
         for k, a in changed.items():
             store.put_safely(coll, k, a)
         notes = await sheet(list(changed.values()))
-        return with_board(f"{drafts} follow-up draft{'s' if drafts != 1 else ''} ready to send.", notebook, updates, needs,
+        out = any(a.get("stage") in SENT_STAGES for a in {**apps, **changed}.values())
+        return with_board(f"{drafts} follow-up draft{'s' if drafts != 1 else ''} ready to send." if out
+                          else "Nothing to follow up yet: no application has been sent.", notebook, updates, needs,
                           extra={"could_not": notes} if notes else None)
 
     # ── send_draft: the draft the agent kept for a row goes out as the person left it, after their approval ──

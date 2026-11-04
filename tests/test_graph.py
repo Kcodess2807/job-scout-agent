@@ -700,6 +700,17 @@ async def test_a_follow_up_draft_sent_by_hand_is_noticed_with_how_much_it_was_ch
     assert t["gmail_draft"].calls == []                                  # nothing new is due
 
 
+async def test_replies_and_follow_ups_say_so_when_nothing_has_been_sent_yet(wired):
+    t, _ = wired(fu_tools(), {})
+    put_app("a", stage="docs_ready", email=NOTE_EMAIL)
+    out = await run({"memory": MEMORY, "inputs": {}, "actions": ["follow_ups"]})
+    assert out["result"]["summary"] == "Nothing to follow up yet: no application has been sent."
+    out = await run({"memory": MEMORY, "inputs": {}, "actions": ["check_replies"]})
+    assert out["result"]["summary"] == "No application has been sent yet, so there are no replies to check."
+    assert not [c for c in t["gmail_read"].calls if "in:sent" not in c["query"]]   # the inbox was never read
+    assert len(out["result"]["applications"]) == 1                                   # the board still shows
+
+
 async def test_the_weekly_report_counts_follow_ups_drafted_sent_and_unchanged(wired):
     wired(fu_tools(), {})
     put_app("a", stage="sent", sent_at=ago(9), follow_ups=2,
