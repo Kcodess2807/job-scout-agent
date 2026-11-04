@@ -24,7 +24,11 @@ from resume import load_resume  # noqa: E402
 
 from jobs import registrable  # noqa: E402  (careers.zentrix.ai -> zentrix.ai: the team page lives on the company's own host)
 
+# his channels by this agent's source names. The second search, the AI answers and "find similar" are not declared
+# (0.7.2): each cost a setup step, an Explore step and a refusal per query, and the real runs found their jobs on the two
+# main channels; his engine treats a channel that raises as off.
 HIS_SOURCES = {"jobs": "search", "pages": "page", "jobs_more": "search_more", "answers": "answers", "similar": "similar"}
+DECLARED = {"search", "page"}
 SEEN_KEPT = 400
 REJECTED_KEPT = 600       # postings found closed or unfit, remembered so the next runs skip them
 REJECTED_DAYS = 3

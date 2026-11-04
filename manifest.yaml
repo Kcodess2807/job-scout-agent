@@ -1,6 +1,6 @@
 contract: v2
 name: applyzer
-version: 0.7.1
+version: 0.7.2
 description: "Finds live jobs that fit your resume, or takes the ones you paste. Tailors your resume and cover letter to each job from your own facts only and sends the application when you approve it, to a recruiter it finds on the company's own pages. Tracks replies in your inbox: drafts your answers, follows up when nobody writes back, and reports each week which emails get answered."
 
 kind: interactive
@@ -109,21 +109,6 @@ sources:
     capability: web_result.search
     default_app: composio_search
     label: "Which web search to find job postings with"
-  search_more:
-    capability: web_result.search
-    default_app: exa
-    label: "A second web search for more postings (optional)"
-    required: false
-  answers:
-    capability: web_answer.get
-    default_app: composio_search
-    label: "An AI web search that cites job pages (optional)"
-    required: false
-  similar:
-    capability: web_result.find_similar
-    default_app: composio_search
-    label: "Finding postings similar to your best matches (optional)"
-    required: false
 
 writes:
   send:

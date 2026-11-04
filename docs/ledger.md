@@ -81,6 +81,11 @@ Ruling: no `gravity.ask` in discover (`ask=None`): a missing role or years takes
 Ruling: his tests need UTF-8 as the default encoding (they read fixtures without one; the platform runs UTF-8): `PYTHONUTF8=1` for pytest on Windows.
 Seen: his engine sent no second-source traffic when `search_more`, `answers` and `similar` are not set up (the fake raises as the gateway would), and his `enrich` and evaluator treat a failing model as no model, so the demo's stand-in model runs the search code-only.
 Deferred: his `action-url` for a found job on a board copy may be the board's page, not the employer's form; his verification status is shown in the row's note.
+## The optional web channels go (2026-11-04)
+Finding: on dev's setup page, the optional `search_more` (default Exa) made the page offer a sign-in, and the gateway refused: "exa connects with an API key the platform team sets: there is nothing to sign in to". The three optional channels (second search, AI answers, find similar) had also cost an Explore step each and a refusal per query on the first real search, which found its five jobs on the two main channels.
+Ruling: `search` and `page` only (0.7.2); the engine's other channels are off by construction (`discover.DECLARED`), never asked for — if wrong, a search finds a little less; the channels come back as one optional source once the setup page treats key-based apps as ready.
+To raise with the platform: the setup page should treat an app that connects with the platform's key (Exa, Firecrawl, Tavily) as ready, not offer a sign-in.
+
 ## The first website runs (2026-11-04)
 Finding: both runs from dev's chat failed at `__start__` with a MemoryError the builder's log hides ("someone else's run"). The gateway's memory refuses a find whose limit is over 500 ("find: limit must be 1-500"); `route()` read the board with `limit=5000` before any node ran. The SDK's local stand-in (gravity run, the tests) caps nothing, which is why a day of local runs never saw it.
 Fix: every read goes through `store.FIND_CAP` (500); a board past 500 jobs is cut at the oldest (ponytail note in store.py). A test asserts no read asks for more. 0.7.1.

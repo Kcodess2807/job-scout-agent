@@ -799,6 +799,8 @@ async def graph():
 
         async def read(source: str, **args):
             name = finder.HIS_SOURCES[source]
+            if name not in finder.DECLARED:
+                raise RuntimeError(f"this agent declares no {name} source")  # his engine: that channel is off
             if name in dead:
                 raise RuntimeError(dead[name])
             try:

@@ -201,6 +201,12 @@ two above: my default), the `needs_you` ordering, the Exa fallback when the comp
   a person) and `follow_ups.replies_after_one`: the numbers behind "which first email works" and "do follow-ups
   help", which decide whether follow-ups stay drafts.
 
+## 17. Two search channels, 2026-11-04
+
+The optional `search_more` (Exa), `answers` and `similar` sources are gone: each was a setup step, an Explore step and a
+refusal per query, and the setup page tried to sign in to Exa, which takes the platform's key. The engine's other
+channels are off by construction (`discover.DECLARED`). The first real search found its five jobs on `search` and `page`.
+
 ## 16. Tracking without leaving the page, 2026-11-04
 
 Arush: the tracking must stay user-friendly. Before, a drafted reply or follow-up existed only in the mailbox: the page

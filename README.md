@@ -73,7 +73,6 @@ PDFs are never stored; they are re-rendered from the JSON when needed.
 | source `mail` | `message.list`, 30-day window, the mailbox (inbox, sent) named per read | same account as `send` | |
 | source `page` | `web_page.get` | Composio Search | Exa, Firecrawl, Tavily or Composio Search |
 | source `search` | `web_result.search` | Composio Search | any web search |
-| sources `search_more`, `answers`, `similar` (optional) | a second search, an AI web search, "more like this" | Exa, Composio Search | skipped quietly when not set up |
 | write `send` | `message.send`, under approvals | Gmail | Gmail or Outlook: the code never names either |
 | write `draft` | `message.create` | same as `send` | |
 | write `tracker` (optional) | `row.upsert` | Google Sheets | their own spreadsheet, or Notion |
