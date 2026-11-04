@@ -81,6 +81,11 @@ Ruling: no `gravity.ask` in discover (`ask=None`): a missing role or years takes
 Ruling: his tests need UTF-8 as the default encoding (they read fixtures without one; the platform runs UTF-8): `PYTHONUTF8=1` for pytest on Windows.
 Seen: his engine sent no second-source traffic when `search_more`, `answers` and `similar` are not set up (the fake raises as the gateway would), and his `enrich` and evaluator treat a failing model as no model, so the demo's stand-in model runs the search code-only.
 Deferred: his `action-url` for a found job on a board copy may be the board's page, not the employer's form; his verification status is shown in the row's note.
+## The first website runs (2026-11-04)
+Finding: both runs from dev's chat failed at `__start__` with a MemoryError the builder's log hides ("someone else's run"). The gateway's memory refuses a find whose limit is over 500 ("find: limit must be 1-500"); `route()` read the board with `limit=5000` before any node ran. The SDK's local stand-in (gravity run, the tests) caps nothing, which is why a day of local runs never saw it.
+Fix: every read goes through `store.FIND_CAP` (500); a board past 500 jobs is cut at the oldest (ponytail note in store.py). A test asserts no read asks for more. 0.7.1.
+To raise with the platform: the SDK's local memory should enforce the gateway's limits (MAX_FIND, MAX_KEYS), so a local run fails where a hosted one would.
+
 ## Tracking without leaving the page (2026-11-04, Arush: "make sure it remains user friendly and the user exp should be smooth while tracking the mails, follow-ups")
 Ruling: a per-row `send_draft` action over a new `send_draft` write (message.send_draft, same account as send, under approvals): the draft goes as the person left it, so an edit in the mailbox is honoured and nothing is rewritten by the agent — if wrong, a person who edited the draft into something unsendable sends it anyway; the approval card shows what goes.
 Ruling: the row carries the latest waiting draft's text and kind, so the page is enough to read it; the mailbox remains the place to edit it.

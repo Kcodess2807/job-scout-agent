@@ -44,6 +44,8 @@ class _Local:
         return [k for k in keys if k in self.items]
 
 
+FIND_CAP = 500  # the platform's memory answers at most 500 rows per find and refuses a bigger ask (gateway memory.MAX_FIND);
+                # a board past 500 jobs is cut at the oldest. ponytail: page by key ranges if anyone gets there
 _LOCAL: dict[str, _Local] = {}
 
 

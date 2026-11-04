@@ -298,14 +298,14 @@ async def graph():
         p = await load_profile(inputs, notebook, notes)
         await jobs.add(jobs.parse_lines(inputs.get("jobs") or ""), "input")
         apps_coll = store.collection("applications")
-        apps = dict(apps_coll.find(limit=5000))
+        apps = dict(apps_coll.find(limit=store.FIND_CAP))
         if p is None:
-            rows, keys = board(dict(store.collection("jobs").find(limit=5000)), apps)
+            rows, keys = board(dict(store.collection("jobs").find(limit=store.FIND_CAP)), apps)
             why = [*notes, *(getattr(model, "notes", None) or [])]  # a failed model call says why (a spent key, a budget)
             return {"result": {"summary": "Nothing prepared: " + notes[0], "applications": rows, "could_not": why, "_layout": LAYOUT},
                     "memory": {**notebook, "last_rows": keys}}
         projects = await load_projects(inputs, notes)
-        all_jobs = dict(store.collection("jobs").find(limit=5000))
+        all_jobs = dict(store.collection("jobs").find(limit=store.FIND_CAP))
         declined = set(store.collection("declined").has_many(list(all_jobs)))
         focus = state.get("focus") or []
         pending = sorted((r for k, r in all_jobs.items() if k not in apps and k not in declined and r.get("picked", True)),
@@ -387,7 +387,7 @@ async def graph():
     def with_board(summary: str, notebook: dict, updates: dict | None = None, needs: list[str] | None = None,
                    extra: dict | None = None) -> dict:
         """A result: what needs the candidate, as lines first, then the one table, with what this run did per row."""
-        rows, keys = board(dict(store.collection("jobs").find(limit=5000)), dict(store.collection("applications").find(limit=5000)),
+        rows, keys = board(dict(store.collection("jobs").find(limit=store.FIND_CAP)), dict(store.collection("applications").find(limit=store.FIND_CAP)),
                            updates=updates)
         result = {"summary": summary, **({"needs_you": needs} if needs else {}), "applications": rows, **(extra or {}), "_layout": LAYOUT}
         if notes := list(getattr(model, "notes", None) or []):  # a spent budget, a failed model call: why a field is blank
@@ -400,7 +400,7 @@ async def graph():
     async def draft(state: State):
         notebook = state.get("memory") or {}
         p = Profile(**notebook.get("profile") or {})
-        apps = dict(store.collection("applications").find(limit=5000))
+        apps = dict(store.collection("applications").find(limit=store.FIND_CAP))
         now = utcnow()
         today = now.date().isoformat()
         # the day's count comes from what was sent, so a run that failed after a send still counts it
@@ -525,7 +525,7 @@ async def graph():
 
     async def not_applying(state: State):
         coll, declined = store.collection("applications"), store.collection("declined")
-        apps, removed = dict(coll.find(limit=5000)), []
+        apps, removed = dict(coll.find(limit=store.FIND_CAP)), []
         job_rows = store.collection("jobs")
         for k in picked_keys(state):
             gone = apps.pop(k, None)
@@ -547,7 +547,7 @@ async def graph():
         notebook, inputs = state.get("memory") or {}, state.get("inputs") or {}
         p = Profile(**notebook.get("profile") or {})
         coll = store.collection("applications")
-        apps = dict(coll.find(limit=5000))
+        apps = dict(coll.find(limit=store.FIND_CAP))
         event = (inputs.get("event") or {}).get("emails")
         if event:
             inbox = mail.messages(event)
@@ -626,7 +626,7 @@ async def graph():
         notebook, now = state.get("memory") or {}, utcnow()
         p = Profile(**notebook.get("profile") or {})
         coll = store.collection("applications")
-        apps = dict(coll.find(limit=5000))
+        apps = dict(coll.find(limit=store.FIND_CAP))
         needs, drafts, inbox = [], 0, None
         changed, updates = await hand_sent(apps, None, now)
         # follow-up drafts the candidate sent from Gmail: matched in Sent by thread, after the draft, their edit measured.
@@ -752,7 +752,7 @@ async def graph():
 
     # ── report: where every application stands, folded from memory ───────────────────────────────────
     async def report(state: State):
-        apps = [a for _, a in store.collection("applications").find(limit=5000)]
+        apps = [a for _, a in store.collection("applications").find(limit=store.FIND_CAP)]
         week = utcnow() - timedelta(days=7)
         recent = lambda a, key: bool(a.get(key)) and datetime.fromisoformat(a[key]) >= week  # noqa: E731
         by_stage: dict[str, int] = {}
@@ -833,8 +833,8 @@ async def graph():
         first = (state.get("actions") or ["prepare"])[0]
         if first == "prepare" and not (inputs.get("jobs") or "").strip():
             # nothing pasted: prepare what was picked, else go and find jobs
-            apps = set(k for k, _ in store.collection("applications").find(limit=5000))
-            waiting = any(j.get("picked", True) and k not in apps for k, j in store.collection("jobs").find(limit=5000))
+            apps = set(k for k, _ in store.collection("applications").find(limit=store.FIND_CAP))
+            waiting = any(j.get("picked", True) and k not in apps for k, j in store.collection("jobs").find(limit=store.FIND_CAP))
             if not waiting:
                 return "discover"
         return {"paste_posting": "paste_posting", "send_email": "draft", "send_draft": "send_draft", "mark_applied": "mark_applied",

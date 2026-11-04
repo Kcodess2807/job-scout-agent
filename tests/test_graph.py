@@ -858,3 +858,20 @@ async def test_send_the_draft_refused_or_gone_says_so_and_changes_nothing(wired)
     assert "probably sent or deleted there" in out["result"]["needs_you"][0]
     out = await run({"inputs": {}, "memory": out["memory"], "actions": ["send_draft"], "action_inputs": {"rows": ["2"]}})
     assert out["result"]["applications"][1]["update"] == "nothing drafted for this one"
+
+
+async def test_no_memory_read_asks_for_more_rows_than_the_platform_answers(wired, monkeypatch):
+    """The first two website runs failed at __start__ with a MemoryError: the gateway caps a find at 500 rows and
+    refuses a bigger ask, and route() asked for 5000 before any node ran."""
+    asked = []
+    real = store._Local.find
+
+    def find(self, where=None, limit=500):
+        asked.append(limit)
+        return real(self, where, limit)
+    monkeypatch.setattr(store._Local, "find", find)
+    memory, c = await prepared(wired)
+    wired(fu_tools(), c)
+    for action in ("report", "follow_ups", "check_replies"):
+        await run({"inputs": {}, "memory": memory, "actions": [action]})
+    assert asked and max(asked) <= 500
