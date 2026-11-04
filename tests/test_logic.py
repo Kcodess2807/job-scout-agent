@@ -1,5 +1,6 @@
 """The rules, without a graph: job rows, the facts check, the email checks, reply matching, the cadence and caps."""
 
+import json
 from datetime import UTC, datetime, timedelta
 
 import jobs
@@ -36,9 +37,34 @@ def test_a_board_host_is_never_the_companys_domain():
 async def test_add_writes_each_job_once_under_its_key_and_keeps_where_it_came_from():
     store._LOCAL.clear()
     rows = jobs.parse_lines("https://acme.com/careers/be\nhttps://acme.com/careers/be?ref=2")
-    added = await jobs.add(rows, "discovery")
+    added = (await jobs.add(rows, "discovery"))["new"]
     assert len(added) == 1 and added[0]["source"] == "discovery" and added[0]["found_at"]
     assert store.collection("jobs").get("acme.com/careers/be")["domain"] == "acme.com"
+
+
+async def test_every_row_given_to_add_is_accounted_for_once():
+    store._LOCAL.clear()
+    store.put_safely(store.collection("declined"), "acme.com/jobs/9", {"at": "2026-11-01"})
+    first = await jobs.add(jobs.parse_lines("https://acme.com/jobs/1"), "discovery")
+    rows = jobs.parse_lines("https://acme.com/jobs/1\nhttps://acme.com/jobs/2\nhttps://acme.com/jobs/2?x=1\nhttps://acme.com/jobs/9")
+    out = await jobs.add(rows, "discovery")
+    assert len(first["new"]) == 1
+    assert (len(out["new"]), len(out["known"]), len(out["declined"]), out["merged"]) == (1, 1, 1, 1)
+
+
+async def test_a_linkedin_job_stored_under_its_old_key_is_known_not_added_again():
+    store._LOCAL.clear()
+    old = "in.linkedin.com/jobs/view/software-engineer-at-truscalar-ai-4454193413"
+    store.put_safely(store.collection("jobs"), old, {"key": old})
+    out = await jobs.add([{"url": "https://www.linkedin.com/jobs/view/4454193413"}], "discovery")
+    assert not out["new"] and out["known"][0]["key"] == old
+
+
+def test_a_record_with_a_long_multibyte_description_is_cut_to_fit_one_memory_item():
+    row = {"key": "k", "company": "Acme", "description": "• Build ünïcode services – fast. " * 2000}
+    fit = jobs.fit_item(row)
+    assert len(json.dumps(fit, ensure_ascii=True).encode()) <= jobs.ITEM_BYTES and fit["company"] == "Acme"
+    assert fit["description"] and row["description"].startswith(fit["description"])
 
 
 # ── Task 3: profile and projects ─────────────────────────────────────────────────────────────────────

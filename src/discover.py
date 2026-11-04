@@ -88,12 +88,14 @@ def rows_of(outcome: ScoutOutcome) -> list[dict]:
                      "domain": registrable(lst.company_domain) if lst.company_domain else None, "location": lst.location,
                      "description": (lst.description or lst.snippet or "")[:DESCRIPTION_CHARS], "hr_email": None,
                      "score": m.score if m else None, "why": reason_for(lst, m, {}) if m else "",
-                     "verified": lst.verification.status, "posted": lst.posted_at, "picked": False})
+                     "verified": lst.verification.status, "posted": lst.posted_at, "picked": False, "scout_key": lst.key})
     return rows
 
 
-async def search(inputs: dict, memory: dict, *, read, model, embed, ask=None, today: dt.date | None = None) -> dict:
-    """{rows, memory, info, warnings, summary, error}. `memory` is this agent's `scout` notebook key, in and out."""
+async def search(inputs: dict, memory: dict, *, read, model, embed, ask=None, today: dt.date | None = None,
+                 listed: list[str] | None = None) -> dict:
+    """{rows, memory, info, warnings, summary, error}. `memory` is this agent's `scout` notebook key, in and out.
+    `listed`: the search's keys of jobs already on the person's list, skipped so a continuing search finds new ones."""
     today = today or dt.date.today()
 
     async def read_page(url: str):
@@ -118,7 +120,7 @@ async def search(inputs: dict, memory: dict, *, read, model, embed, ask=None, to
         return {"rows": [], "memory": memory, "info": {}, "warnings": [], "summary": {}, "error": str(exc)}
     llm = LLMBudget(SCOUT_CONFIG.budget.max_llm_calls)
     outcome = await scout(profile, prefs, read=read, resume_text=resume["text"], model=model, embed=embed,
-                          config=SCOUT_CONFIG, llm=llm, known=known_rejections(memory, today), today=today)
+                          config=SCOUT_CONFIG, llm=llm, known={**known_rejections(memory, today), **{k: {"why": "listed"} for k in listed or []}}, today=today)
     rows = rows_of(outcome)
     shown = [r["url"] for r in rows]
     seen = [k for k in memory.get("seen", []) if k not in shown] + shown

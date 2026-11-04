@@ -14,11 +14,19 @@ from providers.base import Provider
 from providers.catalog import classify
 from security import safe_url
 
-SITE_NAMES = re.compile(r"\s*[|\-–—·]\s*(linkedin|naukri(?:\.com)?|indeed(?:\.com)?|glassdoor|wellfound|angellist|"
+SITE_NAMES = re.compile(r"\s*[|\-–—·]\s*(linkedin(?: jobs)?|naukri(?:\.com)?|indeed(?:\.com)?|glassdoor|wellfound|angellist|"
                         r"greenhouse|lever|ashby|workable|smartrecruiters|workday|foundit|instahyre|internshala|"
                         r"cutshort|hirist|careers?(?: page)?|jobs?(?: page)?|job board|apply now)\s*$", re.I)
 _SPLIT = re.compile(r"\s+(?:[|–—]|-|@|at)\s+")
 _LINKEDIN = re.compile(r"^(?P<company>.+?) hiring (?P<title>.+?)(?: in (?P<loc>.+?))?\s*(?:\|\s*LinkedIn)?$", re.I)
+# LinkedIn's current page title: "Software Engineer – Fresher at TruScalar AI — Hyderabad | LinkedIn Jobs". The title
+# itself may hold dashes ("– Fresher"), so the company is what follows the LAST " at " and the location what follows
+# the em dash after it; the board's own name is stripped first by clean_title.
+_LINKEDIN_AT = re.compile(r"^(?P<title>.+) at (?P<company>[^|—]+?)(?:\s+—\s+(?P<loc>[^—]+?))?\s*(?:\|\s*LinkedIn(?: Jobs)?)?$", re.I)
+# words that are never a hiring company, whatever splits a title into parts
+NOT_A_COMPANY = re.compile(r"^(?:linkedin(?: india| jobs)?|indeed|naukri|glassdoor|fresher|freshers|remote|hybrid|on-?site|"
+                           r"full[- ]?time|part[- ]?time|contract|internship|intern|urgent|immediate joiner|hiring|jobs?|"
+                           r"careers?|apply now|work from home|wfh|india)$", re.I)
 _GH = re.compile(r"^job application for (?P<title>.+?) at (?P<company>.+)$", re.I)
 _TITLE_WORDS = re.compile(
     r"\b(engineer|developer|programmer|analyst|scientist|architect|consultant|designer|manager|lead|intern|"
@@ -89,11 +97,29 @@ def clean_title(raw: str) -> str:
     return t.strip(" -|–:,")
 
 
+def linkedin_title(raw_title: str) -> tuple[str, str, str | None] | None:
+    """(title, company, location) from either LinkedIn title shape, or None when it is neither.
+    "Acme hiring Backend Engineer in Pune | LinkedIn" and "Backend Engineer – Fresher at Acme AI — Pune | LinkedIn Jobs"."""
+    t = " ".join((raw_title or "").split())
+    m = _LINKEDIN.match(t)
+    if m and not NOT_A_COMPANY.match(m.group("company").strip()):
+        return m.group("title").strip(), m.group("company").strip(), (m.group("loc") or "").strip() or None
+    m = _LINKEDIN_AT.match(t)
+    if m:
+        company = m.group("company").strip(" -|–—")
+        if company and not NOT_A_COMPANY.match(company):
+            return m.group("title").strip(" -|–—"), company, (m.group("loc") or "").strip() or None
+    return None
+
+
 def title_company(raw_title: str, url_company: str | None) -> tuple[str, str | None]:
     t = clean_title(raw_title)
-    m = _LINKEDIN.match(t) or _GH.match(t)
+    m = _GH.match(t)
     if m:
         return m.group("title").strip(), m.group("company").strip()
+    li = linkedin_title(raw_title) if ("linkedin" in (raw_title or "").lower() or not url_company) else None
+    if li:
+        return li[0], li[1]
     parts = [p.strip() for p in _SPLIT.split(t) if p.strip()]
     if len(parts) == 1:
         return parts[0], url_company
@@ -106,7 +132,7 @@ def title_company(raw_title: str, url_company: str | None) -> tuple[str, str | N
                 return title, re.sub(r"\s+(?:careers?|jobs?|hiring|recruitment)$", "", p, flags=re.I)
     title = next((p for p in parts if _TITLE_WORDS.search(p)), parts[0])
     others = [p for p in parts if p != title and not geo.find_cities(p) and not re.search(r"\d", p) and len(p) <= 50
-              and not _QUALIFIER.fullmatch(p.strip())]
+              and not _QUALIFIER.fullmatch(p.strip()) and not NOT_A_COMPANY.match(p.strip())]
     return title, (url_company or (others[0] if others else None))
 
 
@@ -158,13 +184,14 @@ def from_search(record: dict, providers: list[Provider], query: str, today: dt.d
         provider = next((p for p in providers if p.kind == "aggregator"), provider)
     canonical = provider.canonical(url)
     url_company = provider.company(url, record.get("title") or "")
-    title, company = title_company(str(record["title"]), url_company)
+    li = linkedin_title(clean_title(str(record["title"]))) if provider.name == "linkedin" else None
+    title, company = (li[0], li[1]) if li else title_company(str(record["title"]), url_company)
     snippet = " ".join(str(record.get("snippet") or "").split())[:600]
     shut = jd.closed_signal(f"{record.get('title') or ''} {snippet}", provider.closed_words)
     loc, cities, country = _location_from(f"{record.get('title')}\n{snippet}")
-    m = _LINKEDIN.match(clean_title(str(record["title"])))
-    if m and m.group("loc"):
-        loc = m.group("loc").strip()
+    li = linkedin_title(str(record["title"])) if provider.name == "linkedin" else None
+    if li and li[2]:
+        loc = li[2]
         cities = [c for c, _ in geo.find_cities(loc)] or cities
         country = geo.find_country(loc) or country
     published = record.get("published")
@@ -214,7 +241,9 @@ def with_page(listing: Listing, page: dict, provider: Provider | None, today: dt
         upd["employment_type"] = etype
     upd["salary"] = jd.salary(text, listing.location_country) or listing.salary
     posted_at, posted_text = jd.posted(text, today)
-    if posted_at:
+    # the oldest date any evidence gives wins: a page reader may return a cached copy whose "1 day ago" was true when it
+    # was crawled, while the search result's absolute date stays right; a job never gets younger by being read
+    if posted_at and (not listing.posted_at or posted_at < listing.posted_at):
         upd.update(posted_at=posted_at, posted_text=posted_text)
     upd["requirements"] = jd.parse(text, title)
     if listing.source_kind == "careers" and (provider is None or provider.kind == "careers") and \

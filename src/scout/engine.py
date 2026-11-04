@@ -124,6 +124,9 @@ async def scout(profile: CandidateProfile, prefs: SearchPrefs, *, read: Read, re
         if len(dedup.items) >= budget.max_candidates:
             return
         seen_before = known.get(listing.key)
+        if seen_before and seen_before.get("why") == "listed":
+            s.skipped_known += 1   # already on the person's list from an earlier run: never counted twice
+            return
         if seen_before and (seen_before.get("why") == "closed" or seen_before.get("fp") == fingerprint):
             s.skipped_known += 1   # closed, or not a fit for these same preferences, in a run of the last few days
             return
@@ -214,6 +217,7 @@ async def scout(profile: CandidateProfile, prefs: SearchPrefs, *, read: Read, re
     border_pending: dict[str, None] = {}
     audit_pending: dict[str, None] = {}
     resolved: set[str] = set()
+    rescued: set[str] = set()   # strong board finds whose employer page was moved to the front of the queue
     similar_asked: set[str] = set()
     unread: set[str] = set()                               # leads not worth a page read (board copies)
     copy_pending: dict[str, None] = {}                     # jobs about to count whose LinkedIn/board copy is opened first
@@ -413,6 +417,22 @@ async def scout(profile: CandidateProfile, prefs: SearchPrefs, *, read: Read, re
             else:
                 unread.add(key)   # a lead only: it cannot count, so no page read is spent on it
 
+    def rescue(listing: Listing, m: Match):
+        """A strong match whose board copy (LinkedIn, Naukri) was read but couldn't be confirmed open (too old, no
+        date): the same opening on the employer's own site is what can confirm it, so that search goes first."""
+        name = norm_company(listing.company) if listing.company else ""
+        if not name or name in rescued or len(rescued) >= budget.max_rescue \
+                or m.score < policy.min_score - policy.borderline_below:
+            return
+        rescued.add(name)
+        q = f"{listing.company} {listing.title} job careers apply"
+        for i, (_, kind, payload) in enumerate(disc_q):
+            if kind == "resolve" and payload == q:
+                disc_q[i] = (2.0, kind, payload)
+                return
+        resolved.add(name)
+        disc_q.append((2.0, "resolve", q))
+
     def after_read(key: str):
         m = matches.get(key)
         listing = dedup.items.get(key)
@@ -421,6 +441,8 @@ async def scout(profile: CandidateProfile, prefs: SearchPrefs, *, read: Read, re
         if not m.eligible:
             remember[key] = {"why": "ineligible", "fp": fingerprint}
             return
+        if listing.source_kind == "board" and listing.verification.status == "unverified":
+            rescue(listing, m)
         lo, hi = policy.min_score - policy.borderline_below, policy.min_score + policy.borderline_above
         if listing.full_text and m.cap is None and not m.llm_evidence and lo <= m.score <= hi:
             border_pending[key] = None

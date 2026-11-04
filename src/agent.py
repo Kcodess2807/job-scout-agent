@@ -11,6 +11,8 @@ from __future__ import annotations
 import asyncio
 import base64
 import hashlib
+import json
+import logging
 import os
 import re
 import statistics
@@ -23,6 +25,7 @@ from langgraph.graph import END, StateGraph
 
 import candidate
 import discover as finder  # puts src/scout (the vendored search) on the path
+import jd  # noqa: E402  (src/scout's posting reader: closed wording, deadlines)
 import jobs
 import mail
 import outreach
@@ -35,6 +38,12 @@ from candidate import Profile
 from tooling import make_embedder, make_io, make_model
 
 PER_RUN = 5            # jobs prepared a run, under the $1 run budget
+FOUND_KEEP_DAYS = 21   # a found job nobody picked is dropped from the list after this (a board posting's freshness)
+LOG = logging.getLogger("applyzer")
+if not LOG.handlers:  # the run's stderr is its log: one JSON line per event
+    LOG.addHandler(logging.StreamHandler())
+    LOG.setLevel(logging.INFO)
+    LOG.propagate = False
 PDF_B64_MAX = 400_000  # a bigger PDF is not put in the result (job-scout's cap)
 STAGES = {"found": "found", "to_prepare": "to prepare", "needs_text": "needs the posting's text", "closed": "closed", "docs_ready": "ready to send",
           "draft_kept": "draft kept", "sent": "emailed", "applied": "applied", "replied": "replied",
@@ -120,6 +129,123 @@ def latest_draft(a: dict) -> dict | None:
     if a.get("stage") == "draft_kept" and a.get("draft_text"):
         return {"kind": "the application", "text": a["draft_text"], "id": a.get("draft_id"), "where": "application"}
     return None
+
+
+def log(event: str, **fields) -> None:
+    """One structured line per decision (route, counts, verification): ids and counts only, never resume or mail text."""
+    LOG.info(json.dumps({"event": event, **fields}, default=str))
+
+
+def closed_reason(text: str, today=None) -> str | None:
+    """Why a posting's own page shows it is closed, or None. Silence is not openness: None only means the page did
+    not say so."""
+    if not text:
+        return None
+    if phrase := jd.closed_signal(text):
+        return f"the page says \"{phrase}\""
+    if tailor.is_closed(text):
+        return "the page says the job is closed"
+    deadline = jd.valid_through(text)
+    if deadline and deadline < (today or utcnow().date()):
+        return f"its application deadline {deadline} has passed"
+    return None
+
+
+# The order steps are offered in: the one closest to an application going out first, then the earlier steps, then
+# what is always possible. Only steps the board's state makes useful are offered (`_offer`: the first is "Do now").
+OFFER_ORDER = ("send_email", "send_draft", "paste_posting", "prepare", "pick", "mark_applied", "check_replies", "follow_ups",
+               "not_applying", "discover", "report")
+OFFER_NOTES = {"pick": "Select the jobs you want, then press this: each is tailored to your resume.",
+               "prepare": "Tailors your resume and a cover letter to each job you picked.",
+               "send_email": "Select the ready rows; nothing goes until you approve it.",
+               "send_draft": "Sends the draft kept on that row, as it is in your mailbox, after you approve it.",
+               "paste_posting": "For a row whose page couldn't be read: paste the posting's text.",
+               "discover": "Searches again for open jobs that fit your resume.",
+               "check_replies": "Reads your inbox for answers to what you sent."}
+
+
+def next_steps(all_jobs: dict, apps: dict, lead: str | None = None) -> list[str]:
+    """The steps worth offering now, from what is on the board: Send only when something is ready to send, Check
+    replies only once something went out, I applied only for a prepared row, Pick only while found jobs wait."""
+    live = [a for a in apps.values() if a.get("stage") not in ("removed",)]
+    waiting = [j for k, j in all_jobs.items() if k not in apps]
+    can = {
+        "prepare": any(j.get("picked", True) for j in waiting),
+        "pick": any(not j.get("picked", True) for j in waiting),
+        "send_email": any(a.get("stage") in ("docs_ready", "draft_kept") and (a.get("contact") or {}).get("email")
+                          and not a.get("needs_email") for a in live),
+        "send_draft": any((d := latest_draft(a)) and d.get("id") for a in live),
+        "paste_posting": any(a.get("stage") == "needs_text" for a in live),
+        "mark_applied": any(a.get("stage") in ("docs_ready", "draft_kept", "needs_text") for a in live),
+        "check_replies": any(a.get("sent_at") or a.get("applied_on") or a.get("stage") in ("sent", "applied", "replied")
+                             for a in live),
+        "not_applying": bool(waiting) or any(a.get("stage") not in ("done", "closed") for a in live),
+        "discover": True,
+        "report": any(a.get("sent_at") for a in live),
+    }
+    can["follow_ups"] = can["check_replies"]
+    offer = [a for a in OFFER_ORDER if can.get(a)]
+    if lead in offer:
+        offer.remove(lead)
+        offer.insert(0, lead)
+    return offer
+
+
+def steer(offer: list[str]) -> dict:
+    """The result keys that steer "What next": the steps, in order, and a line under the ones that need one."""
+    return {"_offer": offer, "_offer_notes": {a: OFFER_NOTES[a] for a in offer if a in OFFER_NOTES}}
+
+
+# ── a search that keeps going until the person's number of jobs is found, across runs ─────────────────
+HUNT_DAYS = 3          # a search still short of its number stops looking after this, and says how far it got
+RECHECK_HOURS = 12     # a found job is re-opened at most this often to see whether it closed
+HUNT_EVERY = "every 6 hours"  # the discover action's schedule in the manifest, in words
+
+
+def wanted_count(inputs: dict, hunt: dict) -> int:
+    """How many jobs the person asked for (1 to 25); blank: the running search's number, else 10."""
+    try:
+        n = int(float(str(inputs.get("count") or "").strip()))
+    except ValueError:
+        return int(hunt.get("target") or 10)
+    return max(1, min(25, n))
+
+
+def hunt_active(hunt: dict, now: datetime) -> bool:
+    """A search short of its number, started within HUNT_DAYS."""
+    return bool(hunt) and not hunt.get("done") and (hunt.get("started") or "") >= (now - timedelta(days=HUNT_DAYS)).isoformat()
+
+
+def hunt_line(target: int, have: int, new: int, earlier: int, done: bool, closed_since: int) -> str:
+    gone = (f" {closed_since} found earlier closed since, so {'they' if closed_since != 1 else 'it'} came off the list."
+            if closed_since else "")
+    pick = " Select the ones you want and press Prepare this one." if have else ""
+    if done:
+        return (f"All {target} job{'s' if target != 1 else ''} found: {new} new this run"
+                + (f", {earlier} still open from earlier" if earlier else "") + ". Each was open when checked; confirm on the "
+                "posting before you apply." + gone + pick)
+    return (f"{have} of {target} found so far ({new} new this run)." + gone
+            + f" There aren't {target} open jobs that fit yet, and nothing was lowered to fill the list. Switch on Keep "
+            f"looking and I search again {HUNT_EVERY} for the {target - have} still missing, for up to {HUNT_DAYS} days; "
+            "or press Find jobs for me to look now." + pick)
+
+
+def hunt_idle_line(hunt: dict) -> str:
+    if not hunt:
+        return "No search is running: press Find jobs for me to start one."
+    have, target = hunt.get("have", len(hunt.get("keys") or [])), hunt.get("target", 0)
+    if hunt.get("stopped"):
+        return (f"Stopped looking after {HUNT_DAYS} days with {have} of {target} found: that's how many open jobs fit "
+                "right now. Press Find jobs for me to start a new search.")
+    return f"Your list is complete: {target} of {target} found. Nothing was searched; press Find jobs for me for more."
+
+
+def keep_looking(target: int) -> dict:
+    return {"_keep_running": {"discover": {
+        "title": f"Keep looking until I have {target}",
+        "does": f"Searches {HUNT_EVERY} for the jobs still missing and adds only open ones that fit; stops by itself when "
+                f"your list is full or after {HUNT_DAYS} days.",
+        "off": "Searches only when you press Find jobs for me."}}}
 
 
 def board(all_jobs: dict, apps: dict, pdfs: dict | None = None, updates: dict | None = None) -> tuple[list[dict], list[str]]:
@@ -229,21 +355,28 @@ async def graph():
         """One job to an application: read, tailored, a letter, a contact. The email is written per company after."""
         app = {k: row.get(k) for k in ("key", "company", "title", "url", "domain", "order")}
         app["created_at"] = utcnow().isoformat()
-        text = row.get("description") or ""
-        if not text and row.get("url"):
-            text = (await io.page(row["url"]))[:15000]
+        stored = row.get("description") or ""
+        # the posting is read again before anything is tailored: a job found days ago, or a stored copy, may have
+        # closed since. A page that cannot be read now leaves the stored text in use, and the row says so.
+        fresh = (await io.page(row["url"]))[:15000] if row.get("url") else ""
+        why = closed_reason(fresh) or closed_reason(stored)
+        if why:
+            log("prepare_closed", key=row.get("key"), reason=why)
+            return {**app, "stage": "closed", "note": f"not prepared: {why}"}
+        recheck = ""
+        if stored and row.get("url") and (not fresh or tailor.is_login_wall(fresh)):
+            recheck = "the posting couldn't be opened again to re-check it is still open: confirm on its page before applying"
+        text = stored or fresh
         if not text:
             return {**app, "stage": "needs_text", "note": "the page couldn't be read: paste the posting's text"
                     if row.get("url") else "no link: paste the posting's text"}
-        if tailor.is_closed(text):
-            return {**app, "stage": "closed", "note": "the page says the job is closed"}
         if tailor.is_login_wall(text):
             return {**app, "stage": "needs_text", "note": "the link opened a sign-in page, not the posting: paste its text"}
         req = await tailor.requirements(model, text)
         if req is None:
             return {**app, "stage": "needs_text", "note": "the posting couldn't be read: paste its text"}
         if req.closed:
-            return {**app, "stage": "closed", "note": "the page says the job is closed"}
+            return {**app, "stage": "closed", "note": "not prepared: the page says the job is closed"}
         if not (req.must_have or req.keywords or req.company_fact):  # navigation text, not a posting
             return {**app, "stage": "needs_text", "note": "the page didn't read as a job posting: paste its text"}
         req = req.model_copy(update={"company": row.get("company") or req.company, "title": row.get("title") or req.title})
@@ -259,7 +392,8 @@ async def graph():
         return {**app, "company": req.company, "title": req.title, "stage": "docs_ready", "req": req.model_dump(),
                 "resume": doc.model_dump(), "lines_dropped": dropped, "letter": letter, "letter_problems": letter_problems,
                 "contact": contact, "projects": [x["name"] for x in picks if x.get("name")], "matched": matched,
-                "gaps": gaps, "apply_url": req.apply_url or row.get("url") or "", "_picks": picks}
+                "gaps": gaps, "apply_url": req.apply_url or row.get("url") or "", "_picks": picks,
+                **({"note": recheck} if recheck else {})}
 
     async def write_emails(ready: list[dict], p: Profile) -> None:
         """One email per company this run: two roles there share it (and its subject names both)."""
@@ -289,27 +423,41 @@ async def graph():
         for k in keys:
             row = job_rows.get(k)
             if row and text:
-                store.put_safely(job_rows, k, {**row, "description": text[:20000]})
+                store.put_safely(job_rows, k, jobs.fit_item({**row, "description": text[:20000], "picked": True}))
                 apps.delete(k)
         return {"focus": keys}
 
     async def prepare(state: State):
         inputs, notebook, notes = state.get("inputs") or {}, dict(state.get("memory") or {}), []
-        p = await load_profile(inputs, notebook, notes)
-        await jobs.add(jobs.parse_lines(inputs.get("jobs") or ""), "input")
+        pasted = await jobs.add(jobs.parse_lines(inputs.get("jobs") or ""), "input")
+        notes += [f"{r.get('url') or r.get('company')}: couldn't be saved (too large for memory)" for r in pasted["failed"]]
         apps_coll = store.collection("applications")
         apps = dict(apps_coll.find(limit=store.FIND_CAP))
-        if p is None:
-            rows, keys = board(dict(store.collection("jobs").find(limit=store.FIND_CAP)), apps)
-            why = [*notes, *(getattr(model, "notes", None) or [])]  # a failed model call says why (a spent key, a budget)
-            return {"result": {"summary": "Nothing prepared: " + notes[0], "applications": rows, "could_not": why, "_layout": LAYOUT},
-                    "memory": {**notebook, "last_rows": keys}}
-        projects = await load_projects(inputs, notes)
         all_jobs = dict(store.collection("jobs").find(limit=store.FIND_CAP))
         declined = set(store.collection("declined").has_many(list(all_jobs)))
         focus = state.get("focus") or []
         pending = sorted((r for k, r in all_jobs.items() if k not in apps and k not in declined and r.get("picked", True)),
                          key=lambda r: (r["key"] not in focus, r.get("order") or ""))
+        redo_waiting = any(a.get("stage") == "docs_ready" and a.get("needs_email") for a in apps.values())
+        if not pending and not redo_waiting:
+            # Prepare with nothing picked: it says so and offers the step that is due, never a search the person
+            # did not ask for (a search runs only on Find jobs, or on a first run with no job given)
+            unpicked = sum(1 for k, j in all_jobs.items() if k not in apps and not j.get("picked", True))
+            summary = (f"Nothing prepared yet: {unpicked} found job{'s wait' if unpicked != 1 else ' waits'} for your pick. "
+                       "Select the rows you want and press Prepare this one." if unpicked else
+                       "Nothing waiting to prepare: every job on your list is prepared or set aside. "
+                       "Paste job links, or press Find jobs for me to search again.")
+            log("prepare_nothing_waiting", unpicked=unpicked)
+            return with_board(summary, notebook, lead="pick" if unpicked else "discover",
+                              extra={"could_not": notes} if notes else None)
+        p = await load_profile(inputs, notebook, notes)
+        if p is None:
+            rows, keys = board(all_jobs, apps)
+            why = [*notes, *(getattr(model, "notes", None) or [])]  # a failed model call says why (a spent key, a budget)
+            return {"result": {"summary": "Nothing prepared: " + notes[0], "applications": rows, "could_not": why, "_layout": LAYOUT,
+                               **steer(["prepare", *[a for a in next_steps(all_jobs, apps) if a != "prepare"]])},
+                    "memory": {**notebook, "last_rows": keys}}
+        projects = await load_projects(inputs, notes)
         if len(pending) > PER_RUN:
             notes.append(f"{len(pending) - PER_RUN} more jobs wait for the next run ({PER_RUN} a run, to stay inside "
                          "the run's budget): run Prepare again")
@@ -343,12 +491,16 @@ async def graph():
         notes += await sheet(list(done))
         rows, keys = board(all_jobs, apps, pdfs)
         waiting = sum(a["stage"] == "needs_text" for a in done)
+        closed = [a for a in done if a["stage"] == "closed"]
         summary = (f"{len(ready)} application{'s' if len(ready) != 1 else ''} ready"
                    + (f", {waiting} waiting for the posting's text" if waiting else "")
+                   + (f", {len(closed)} not prepared because the job has closed" if closed else "")
                    + ". Nothing is sent until you press Send.")
+        log("prepare_done", ready=len(ready), needs_text=waiting, closed=len(closed), redo=len(redo))
         result = {"summary": summary, "applications": rows, "answer_sheet": answer_sheet(inputs, p),
-                  "could_not": notes + [n for n in getattr(model, "notes", []) if n not in notes],
-                  "_offer": ["send_email", "paste_posting", "mark_applied", "not_applying", "check_replies"]}
+                  "could_not": notes + [n for n in getattr(model, "notes", []) if n not in notes], "_layout": LAYOUT,
+                  **steer(next_steps(all_jobs, apps, lead=next(
+                      (a for a in ("send_email", "mark_applied") if ready and a in next_steps(all_jobs, apps)), None)))}
         return {"result": result, "memory": {**notebook, "last_rows": keys}}
 
     async def hand_sent(apps: dict, only: set[str] | None, now: datetime) -> tuple[dict, dict]:
@@ -385,11 +537,13 @@ async def graph():
         return [f"the Google Sheet wasn't updated: {err}"] if err else []
 
     def with_board(summary: str, notebook: dict, updates: dict | None = None, needs: list[str] | None = None,
-                   extra: dict | None = None) -> dict:
-        """A result: what needs the candidate, as lines first, then the one table, with what this run did per row."""
-        rows, keys = board(dict(store.collection("jobs").find(limit=store.FIND_CAP)), dict(store.collection("applications").find(limit=store.FIND_CAP)),
-                           updates=updates)
-        result = {"summary": summary, **({"needs_you": needs} if needs else {}), "applications": rows, **(extra or {}), "_layout": LAYOUT}
+                   extra: dict | None = None, lead: str | None = None) -> dict:
+        """A result: what needs the candidate, as lines first, then the one table, with what this run did per row, and
+        the steps the board's state makes useful (`lead` first when it is one of them)."""
+        all_jobs, apps = dict(store.collection("jobs").find(limit=store.FIND_CAP)), dict(store.collection("applications").find(limit=store.FIND_CAP))
+        rows, keys = board(all_jobs, apps, updates=updates)
+        result = {"summary": summary, **({"needs_you": needs} if needs else {}), "applications": rows, **(extra or {}), "_layout": LAYOUT,
+                  **steer(next_steps(all_jobs, apps, lead))}
         if notes := list(getattr(model, "notes", None) or []):  # a spent budget, a failed model call: why a field is blank
             result["could_not"] = [*(result.get("could_not") or []), *notes]
         return {"result": result, "memory": {**notebook, "last_rows": keys}}
@@ -507,8 +661,10 @@ async def graph():
         notebook["sent_today"] = {today: int(state.get("sent_today") or 0) + sent}
         coll = store.collection("applications")
         notes = await sheet([a for k in updates if (a := coll.get(k))])
+        kept = any(e["status"] == "kept as a draft" for e in entries)
         return with_board(f"{sent} sent, {len(entries) - sent} kept as drafts or skipped.", notebook, updates,
-                          extra={"could_not": notes} if notes else None)
+                          extra={"could_not": notes} if notes else None,
+                          lead="send_draft" if kept else "check_replies" if sent else None)
 
     # ── mark_applied, not_applying ───────────────────────────────────────────────────────────────────
     async def mark_applied(state: State):
@@ -809,16 +965,109 @@ async def graph():
                 if any(w in str(e) for w in ("NEEDS_RECONNECT", "has no sources.", "NOT_GRANTED")):
                     dead[name] = str(e)[:200]
                 raise
-        got = await finder.search(inputs, notebook.get("scout") or {}, read=read, model=model, embed=make_embedder())
-        if got["error"]:
-            return with_board(got["error"], notebook)
-        added = await jobs.add(got["rows"], "discovery")
-        notebook["scout"] = got["memory"]
-        n, new = len(got["rows"]), {r["key"] for r in added}
-        updates = {r["key"]: ("found this run" if r["key"] in new else "found again") for r in added}
-        summary = (f"{n} job{'s' if n != 1 else ''} found that fit your resume. Pick the ones to apply for."
-                   if n else "No job found that fits well enough this run.")
-        return with_board(summary, notebook, updates, extra={"could_not": got["warnings"]} if got["warnings"] else None)
+        asked = (state.get("actions") or ["prepare"])[0]
+        # Prepare on a first run with no job given searches instead: the result says which step ran
+        lead_in = "" if asked == "discover" else "No job was given to prepare, so I searched for jobs first. "
+        now = utcnow()
+        unattended = os.environ.get("GRAVITY_UNATTENDED") == "1"   # a scheduled tick: nobody is watching
+        hunt = dict(notebook.get("hunt") or {})
+        active = hunt_active(hunt, now)
+        if unattended and not active:
+            # a tick with no unfinished search: nothing is searched (and nothing is spent on searching)
+            if hunt and not hunt.get("done"):
+                hunt.update(done=True, stopped=True)
+            notebook["hunt"] = hunt
+            log("discover_tick_idle", hunt=bool(hunt), stopped=bool(hunt.get("stopped")))
+            return with_board(hunt_idle_line(hunt), notebook, lead="pick")
+        target = wanted_count(inputs, hunt)
+        if not active:
+            hunt = {"target": target, "started": now.isoformat(), "keys": [], "runs": 0}
+        hunt.update(target=target, runs=int(hunt.get("runs") or 0) + 1)
+        still, closed_since = await still_open(hunt.get("keys") or [], now)
+        missing = target - len(still)
+        updates: dict = {}
+        warnings: list[str] = []
+        new: list = []
+        known: list = []
+        saved: dict = {"new": [], "known": [], "declined": [], "failed": [], "merged": 0}
+        pruned, got = 0, {"rows": [], "status": "skipped", "summary": {}}
+        if missing > 0:
+            listed = [j["scout_key"] for _, j in store.collection("jobs").find(limit=store.FIND_CAP) if j.get("scout_key")]
+            got = await finder.search({**inputs, "count": str(missing)}, notebook.get("scout") or {}, read=read, model=model,
+                                      embed=make_embedder(), listed=listed)
+            if got["error"]:
+                notebook["hunt"] = {**hunt, "keys": still}
+                return with_board(lead_in + got["error"], notebook, lead="discover")
+            pruned = prune_found(got["rows"])
+            saved = await jobs.add(got["rows"], "discovery")
+            scout_mem = dict(got["memory"])
+            scout_mem["prefs"] = {**(scout_mem.get("prefs") or {}), "count": target}   # the person's number, not this run's
+            notebook["scout"] = scout_mem
+            new, known = saved["new"], saved["known"]
+            updates = {**{r["key"]: "found this run" for r in new}, **{r["key"]: "found again (already on your list)" for r in known}}
+            warnings = list(got["warnings"])
+            if saved["failed"]:
+                warnings.append(f"{len(saved['failed'])} more found job{'s' if len(saved['failed']) != 1 else ''} couldn't be saved "
+                                "(memory refused the record), so they aren't listed: "
+                                + "; ".join(f"{r.get('company')}, {r.get('title')}" for r in saved["failed"][:5]))
+        keys = still + [r["key"] for r in [*new, *known] if r["key"] not in still]
+        have = len(keys)   # counted from rows stored on the list, never from what the search said it found
+        done = have >= target
+        hunt.update(keys=keys, done=done, have=have)
+        notebook["hunt"] = hunt
+        summary = hunt_line(target, have, len(new), len(still), done, closed_since)
+        if saved["declined"]:
+            summary += f" {len(saved['declined'])} you had set aside were left out."
+        if pruned:
+            summary += f" {pruned} older found job{'s' if pruned != 1 else ''} you didn't pick (over {FOUND_KEEP_DAYS} days) came off the list."
+        log("discover_counts", asked=asked, unattended=unattended, target=target, had=len(still), missing=max(missing, 0),
+            qualified=len(got["rows"]), new=len(new), known=len(known), declined=len(saved["declined"]),
+            failed=len(saved["failed"]), merged=saved["merged"], pruned=pruned, closed_since=closed_since, have=have,
+            done=done, status=got.get("status"), searched=(got.get("summary") or {}).get("search_calls"))
+        extra = {**({"could_not": warnings} if warnings else {}), **({} if done else keep_looking(target))}
+        return with_board(lead_in + summary, notebook, updates, lead="pick" if have else "discover", extra=extra or None)
+
+    async def still_open(keys: list[str], now: datetime) -> tuple[list[str], int]:
+        """The jobs this search already found that still count toward the person's number: on the list or prepared,
+        not set aside, and, for a found job not looked at in RECHECK_HOURS, its page not saying it closed since.
+        (kept keys, how many closed since)."""
+        coll = store.collection("jobs")
+        listed, apps = dict(coll.find(limit=store.FIND_CAP)), dict(store.collection("applications").find(limit=store.FIND_CAP))
+        cutoff = (now - timedelta(hours=RECHECK_HOURS)).isoformat()
+        kept, due = [], []
+        for k in keys:
+            a, j = apps.get(k), listed.get(k)
+            if a:
+                if a.get("stage") not in ("closed", "removed"):
+                    kept.append(k)
+            elif j:
+                kept.append(k)
+                if j.get("url") and not j.get("picked") and (j.get("checked_at") or j.get("found_at") or "") < cutoff:
+                    due.append(k)
+        texts = await asyncio.gather(*(io.page(listed[k]["url"]) for k in due))
+        closed = 0
+        for k, text in zip(due, texts):
+            if why := closed_reason(text):
+                coll.delete(k)
+                kept.remove(k)
+                closed += 1
+                log("recheck_closed", key=k, reason=why)
+            elif text:
+                store.put_safely(coll, k, {**listed[k], "checked_at": now.isoformat()})
+        return kept, closed
+
+    def prune_found(rows: list[dict]) -> int:
+        """Found jobs nobody picked, older than FOUND_KEEP_DAYS and not found again now, come off the list: a stale
+        posting is never offered as if it were current."""
+        coll = store.collection("jobs")
+        apps = set(store.collection("applications").has_many([k for k, _ in coll.find(limit=store.FIND_CAP)]))
+        again = {jobs.job_key(r) for r in rows}
+        cutoff = (utcnow() - timedelta(days=FOUND_KEEP_DAYS)).isoformat()
+        gone = [k for k, j in coll.find(limit=store.FIND_CAP) if j.get("source") == "discovery" and not j.get("picked")
+                and k not in apps and k not in again and (j.get("found_at") or "") < cutoff]
+        for k in gone:
+            coll.delete(k)
+        return len(gone)
 
     async def pick(state: State):
         coll, keys = store.collection("jobs"), picked_keys(state)
@@ -834,10 +1083,10 @@ async def graph():
             return "check_replies"
         first = (state.get("actions") or ["prepare"])[0]
         if first == "prepare" and not (inputs.get("jobs") or "").strip():
-            # nothing pasted: prepare what was picked, else go and find jobs
-            apps = set(k for k, _ in store.collection("applications").find(limit=store.FIND_CAP))
-            waiting = any(j.get("picked", True) and k not in apps for k, j in store.collection("jobs").find(limit=store.FIND_CAP))
-            if not waiting:
+            # nothing pasted and no job ever listed (a first run): go and find jobs. Once anything is on the list,
+            # Prepare prepares (or says what it waits for, a pick); it never starts a search on its own.
+            if not store.collection("jobs").find(limit=1) and not store.collection("applications").find(limit=1):
+                log("route", asked=first, runs="discover", why="no job listed yet")
                 return "discover"
         return {"paste_posting": "paste_posting", "send_email": "draft", "send_draft": "send_draft", "mark_applied": "mark_applied",
                 "not_applying": "not_applying", "check_replies": "check_replies", "follow_ups": "follow_ups",

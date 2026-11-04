@@ -90,10 +90,22 @@ class SmartRecruiters(Provider):
 _LINKEDIN_TITLE = re.compile(r"^(?P<company>.+?) hiring (?P<title>.+?)(?: in (?P<loc>.+?))?\s*\|\s*LinkedIn", re.I)
 
 
+_LINKEDIN_AT_TITLE = re.compile(r"^.+ at (?P<company>[^|—]+?)(?:\s+—\s+[^—|]+?)?\s*\|\s*LinkedIn", re.I)
+_LINKEDIN_SLUG = re.compile(r"^/jobs/view/(?P<slug>[\w%-]+?)-\d{8,}/?$")
+
+
 class LinkedIn(Provider):
+    """Company from the page title (both of LinkedIn's shapes), else from the URL slug
+    (/jobs/view/software-engineer-at-truscalar-ai-4454193413 -> "Truscalar Ai"), which only fills a gap: the slug
+    loses capitals and punctuation, and a title holding " at " splits ambiguously."""
     def company(self, url, title):
-        m = _LINKEDIN_TITLE.match(title or "")
-        return m.group("company").strip() if m else None
+        m = _LINKEDIN_TITLE.match(title or "") or _LINKEDIN_AT_TITLE.match(title or "")
+        if m:
+            return m.group("company").strip()
+        s = _LINKEDIN_SLUG.match(urlsplit(url).path)
+        if s and s.group("slug").count("-at-") == 1:
+            return slug_company(s.group("slug").split("-at-")[1])
+        return None
 
 
 class Board(Provider):
@@ -229,15 +241,15 @@ def build() -> list[Provider]:
     boards = [
         LinkedIn("linkedin", "LinkedIn", "board", 0.6, ("linkedin.com",),
                  posting=re.compile(r"^/jobs/view/(?:[\w%-]*?-)?(?P<id>\d{8,})"), priority=0.9, site="linkedin.com/jobs/view",
-                 closed_words=("no longer accepting applications",)),
+                 closed_words=("no longer accepting applications",), fresh_days=21),
         Naukri("naukri", "Naukri", "board", 0.6, ("naukri.com",), countries=INDIA,
               posting=re.compile(r"^/job-listings-[\w-]*?-(?P<id>\d{9,})"), priority=0.85, site="naukri.com/job-listings",
-              closed_words=("this job is no longer available", "job has expired")),
+              closed_words=("this job is no longer available", "job has expired"), fresh_days=21),
         Board("wellfound", "Wellfound", "board", 0.65, ("wellfound.com", "angel.co"),
               posting=re.compile(r"/jobs/(?P<id>\d{5,})"), priority=0.75, site="wellfound.com/jobs"),
         Board("indeed", "Indeed", "board", 0.5, ("indeed.com", "indeed.co.in", "indeed.co.uk"),
               posting=re.compile(r"/(?:viewjob|rc/clk|m/basecamp/viewjob|pagead/clk)\?(?:.*&)?jk=(?P<id>[0-9a-f]{16})"),
-              fetchable=False, priority=0.6, site="indeed.com/viewjob"),
+              fetchable=False, priority=0.6, site="indeed.com/viewjob", fresh_days=21),
         Board("foundit", "Foundit", "board", 0.5, ("foundit.in",), countries=INDIA,
               posting=re.compile(r"^/job/[\w-]+?-(?P<id>\d{6,})"), priority=0.55, site="foundit.in/job"),
         Board("instahyre", "Instahyre", "board", 0.5, ("instahyre.com",), countries=INDIA,

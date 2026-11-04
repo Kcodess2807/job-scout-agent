@@ -55,7 +55,15 @@ CLOSED = ("no longer accepting applications", "no longer available", "no longer 
           "this job has expired", "job has expired", "posting has expired", "this posting is closed", "job is closed",
           "applications are closed", "applications have closed", "this position is closed", "position is no longer",
           "role has been filled", "vacancy has been filled", "job not found", "page not found", "the page you requested could not be found",
-          "this job listing is no longer active", "we are no longer accepting", "listing has expired", "job posting has been removed")
+          "this job listing is no longer active", "we are no longer accepting", "listing has expired", "job posting has been removed",
+          "not accepting applications", "applications closed", "application closed", "job expired", "posting expired",
+          "posting removed", "posting has been removed", "vacancy closed", "vacancy is closed", "position filled",
+          "this job is no longer available", "this role is no longer available", "job is no longer available")
+# a closed phrase inside one of these sentences is about something else ("we are not accepting applications from
+# agencies", "applications closed? write to us anyway"), not about this posting
+_CLOSED_ASIDE = re.compile(r"\b(agenc(?:y|ies)|third[- ]part(?:y|ies)|recruit(?:er|ment) firms?|unsolicited|via email|by email|"
+                           r"other (?:roles|positions|openings)|similar (?:jobs|roles)|talent (?:pool|community)|"
+                           r"if (?:this|the) (?:role|job|position)|if applications)\b", re.I)
 APPLY = ("apply for this job", "apply now", "submit application", "submit your application", "apply for this position",
          "easy apply", "apply on company website", "i'm interested", "apply to this job", "start your application",
          "application form", "upload your resume", "upload resume", "attach resume")
@@ -283,6 +291,13 @@ def _date(text: str) -> dt.date | None:
     return None
 
 
+def age_upper_days(n: int, unit: str) -> int:
+    """The oldest a posting can be when a site says "<n> <unit> ago": sites round down, so "3 weeks ago" is 21 to 27
+    days and "1 month ago" 30 to 59. Freshness is judged on the old end, so a stale job never reads as fresh."""
+    unit = unit.lower().rstrip("s")
+    return {"minute": 0, "hour": 1 if n >= 12 else 0, "day": n, "week": 7 * n + 6, "month": 30 * n + 29}[unit]
+
+
 def posted(text: str, today: dt.date) -> tuple[str | None, str | None]:
     """(ISO date, the words it came from), only when the posting states it."""
     t = (text or "")[:8000]
@@ -294,9 +309,7 @@ def posted(text: str, today: dt.date) -> tuple[str | None, str | None]:
         return d.isoformat(), m.group(0).strip()[:60]
     m = _AGO.search(t)
     if m:
-        n, unit = int(m.group(1)), m.group(2).lower()
-        days = {"minute": 0, "hour": 0, "day": n, "week": 7 * n, "month": 30 * n}[unit]
-        return (today - dt.timedelta(days=days)).isoformat(), m.group(0).strip()[:60]
+        return (today - dt.timedelta(days=age_upper_days(int(m.group(1)), m.group(2)))).isoformat(), m.group(0).strip()[:60]
     if re.search(r"\b(just posted|posted today|posted\s+just now)\b", t, re.I):
         return today.isoformat(), "posted today"
     return None, None
@@ -308,10 +321,17 @@ def valid_through(text: str) -> dt.date | None:
 
 
 def closed_signal(text: str, extra: tuple[str, ...] = ()) -> str | None:
+    """The closed-posting phrase the page shows about this posting, or None. A phrase counts only where its sentence
+    is not about agencies, other roles or a talent pool."""
     low = " ".join((text or "").lower().split())[:20000]
     for phrase in (*extra, *CLOSED):
-        if phrase in low:
-            return phrase
+        start = low.find(phrase)
+        while start != -1:
+            a = max(low.rfind(".", 0, start), low.rfind("!", 0, start), low.rfind("?", 0, start)) + 1
+            ends = [i for i in (low.find(c, start + len(phrase)) for c in ".!?") if i != -1]
+            if not _CLOSED_ASIDE.search(low[a:min(ends) if ends else len(low)]):
+                return phrase
+            start = low.find(phrase, start + len(phrase))
     return None
 
 

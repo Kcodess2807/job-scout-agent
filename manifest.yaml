@@ -1,6 +1,6 @@
 contract: v2
-name: applyzer
-version: 0.7.2
+name: applyzersss
+version: 0.7.3
 description: "Finds live jobs that fit your resume, or takes the ones you paste. Tailors your resume and cover letter to each job from your own facts only and sends the application when you approve it, to a recruiter it finds on the company's own pages. Tracks replies in your inbox: drafts your answers, follows up when nobody writes back, and reports each week which emails get answered."
 
 kind: interactive
@@ -142,6 +142,9 @@ actions:
     default: true
   - name: discover
     label: "Find jobs for me"
+    # off until the person switches on "Keep looking": a tick searches only while a search is short of its number
+    # (started within 3 days); otherwise it returns at once without searching
+    schedule: { cron: "0 */6 * * *", consumer_can_change: true }
   - name: pick
     label: "Prepare this one"
     per_row: true

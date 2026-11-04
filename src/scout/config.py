@@ -40,7 +40,9 @@ class Budget:
     max_llm_calls: int = 20             # requirement checks + stage-D evaluation + explanations
     max_llm_tokens: int = 2500          # max_tokens on each model call
     max_board_pages: int = 2            # ATS board index pages read to harvest postings (incremental retrieval)
-    max_resolve: int = 30               # board finds looked up on the employer's own site
+    max_resolve: int = 80               # board finds looked up on the employer's own site (was 30: since board copies
+                                        # need a 21-day date to count, the employer's page is how most of them get confirmed)
+    max_rescue: int = 40                # of those, strong matches whose board copy couldn't be confirmed, looked up first
     max_similar: int = 20               # "more like this" searches from qualified jobs
     concurrency: int = 8                # reads in flight at once
     retries: int = 2                    # extra attempts on a transient failure
@@ -66,7 +68,10 @@ class Policy:
                                         # years: "1+" or "1-2" years is out for 1 year; "0-2" and freshers stay in
     experience_tolerance: float = 0.0   # years below a stated minimum still accepted (with a penalty)
     experience_tolerance_share: float = 0.0
-    stale_after_days: int = 60          # an unverified posting older than this is not counted as likely active
+    stale_after_days: int = 21          # a job board's copy (LinkedIn, Naukri, Indeed, ...) older than this is not counted as
+                                        # likely active; a provider's own `fresh_days` wins. Was 60: a LinkedIn "2 months ago"
+                                        # posting counted as open, and most of those had stopped taking applications
+    careers_fresh_days: int = 30        # a careers page that shows the job but no apply control: older than this, unverified
     prefilter_min_title: float = 0.30   # title relevance needed before a posting is read in full
 
 

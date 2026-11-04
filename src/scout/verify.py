@@ -100,6 +100,9 @@ def verify(listing: Listing, page: PageResult | None, provider: Provider | None,
                          "the apply button is not in the page text this reader returns"]
             return Verification(status="verified_active", checked_at=checked, evidence=evidence)
         evidence.append("no application button was visible in the page text")
+        if age is not None and age > policy.careers_fresh_days:
+            evidence.append(f"posted about {age} days ago, not confirmed open")
+            return Verification(status="unverified", checked_at=checked, evidence=evidence)
         return Verification(status="likely_active", checked_at=checked, evidence=evidence)
     # a board's page: live and showing the job, but not the employer's own listing
     evidence.insert(0, f"the {listing.source} page is live")
@@ -107,9 +110,11 @@ def verify(listing: Listing, page: PageResult | None, provider: Provider | None,
         evidence.append(f"it shows \"{apply}\"")
     if kind == "aggregator":
         return Verification(status="unverified", checked_at=checked, evidence=evidence + ["an aggregator's copy"])
-    if age is not None and age <= policy.stale_after_days:
+    fresh = provider.fresh_days if provider is not None and provider.fresh_days else policy.stale_after_days
+    if age is not None and age <= fresh:
         evidence.append(f"posted {age} days ago")
         return Verification(status="likely_active", checked_at=checked, evidence=evidence,
                             application_url_checked=bool(apply) and listing.application_url == listing.canonical_url)
-    evidence.append("no posting date to show it is recent" if age is None else f"posted {age} days ago, not confirmed open")
+    evidence.append("no posting date to show it is recent" if age is None
+                    else f"posted about {age} days ago (older than {fresh} days), not confirmed open")
     return Verification(status="unverified", checked_at=checked, evidence=evidence)

@@ -5,10 +5,12 @@ an assertion reads the same whichever contract made the call."""
 import json
 
 import base64
+from datetime import timedelta
 
 import pytest
 
 import agent
+import jobs
 import mail
 import store
 import tailor
@@ -733,7 +735,7 @@ async def test_a_first_run_with_a_resume_and_no_job_links_searches_and_shows_wha
     out = await run({"inputs": SEARCH_INPUTS})
     r = out["result"]
     found = [row for row in r["applications"] if row["stage"] == "found"]
-    assert 1 <= len(found) <= 3 and r["summary"].startswith(f"{len(found)} job")
+    assert 1 <= len(found) <= 3 and (f"All {len(found)} jobs found" in r["summary"] or f"{len(found)} of 3 found" in r["summary"])
     row = found[0]
     assert row["company"] and row["role"] and row["apply_link"].startswith("http") and row["fit"].startswith("fit ")
     key = out["memory"]["last_rows"][0]
@@ -748,7 +750,7 @@ async def test_picking_a_found_job_prepares_it_and_the_rest_stay_found(wired):
     t, model = wired(search_tools(), canned())
     out = await run({"inputs": SEARCH_INPUTS})
     n = len(out["result"]["applications"])
-    t, model = wired({**search_tools(), **gmail_none()}, canned())
+    t, model = wired({**search_tools(), **gmail_none(), "web_fetch": page_fetch({})}, canned())
     out = await run({"inputs": SEARCH_INPUTS, "memory": out["memory"], "actions": ["pick"], "action_inputs": {"rows": ["1"]}})
     rows = out["result"]["applications"]
     assert len(rows) == n and rows[0]["stage"] in ("ready to send", "ready: no address yet") and rows[0]["pdf_name"]
@@ -875,3 +877,188 @@ async def test_no_memory_read_asks_for_more_rows_than_the_platform_answers(wired
     for action in ("report", "follow_ups", "check_replies"):
         await run({"inputs": {}, "memory": memory, "actions": [action]})
     assert asked and max(asked) <= 500
+
+
+# ── The first website run: expired jobs, a count that didn't match, Prepare that searched again, every step offered ──
+def found_jobs(memory=None):
+    """The board after a search, without running one: three found jobs, none picked."""
+    for i, (co, url) in enumerate((("Acme", "https://acme.com/jobs/1"), ("Zentrix", "https://zentrix.ai/careers/2"),
+                                   ("Nimbus", "https://nimbus.io/jobs/3"))):
+        store.put_safely(store.collection("jobs"), url.split("//")[1], {
+            "key": url.split("//")[1], "company": co, "title": "Backend Engineer", "url": url, "source": "discovery",
+            "description": POSTING.replace("Blacksmith", co), "picked": False, "order": f"2026-11-01#{i:05d}",
+            "found_at": agent.utcnow().isoformat(), "score": 80, "verified": "likely_active"})
+    return memory or MEMORY
+
+
+async def test_prepare_after_a_search_asks_for_a_pick_and_never_searches_again(wired):
+    """Seen live: after Find jobs, pressing Prepare applications ran the search again (nothing was picked, so the
+    router took it for a first run), and "What next" offered Find jobs for me again."""
+    memory = found_jobs()
+    t, model = wired({"search": lambda a: pytest.fail("Prepare must not search"),
+                      "page": lambda a: pytest.fail("Prepare must not search"), **gmail_none()}, canned())
+    out = await run({"inputs": {}, "memory": memory, "actions": ["prepare"]})
+    r = out["result"]
+    assert r["summary"].startswith("Nothing prepared yet: 3 found jobs wait for your pick")
+    assert r["_offer"][0] == "pick" and "send_email" not in r["_offer"] and "check_replies" not in r["_offer"]
+    assert len(r["applications"]) == 3 and "Tailored" not in model.calls
+
+
+async def test_a_first_run_says_it_searched_because_no_job_was_given(wired):
+    t, model = wired(search_tools(), canned())
+    out = await run({"inputs": SEARCH_INPUTS, "actions": ["prepare"]})
+    r = out["result"]
+    assert r["summary"].startswith("No job was given to prepare, so I searched for jobs first.")
+    assert r["_offer"][0] == "pick"
+
+
+async def test_after_a_search_only_the_steps_that_fit_are_offered(wired):
+    t, model = wired(search_tools(), canned())
+    out = await run({"inputs": SEARCH_INPUTS, "actions": ["discover"]})
+    offer = out["result"]["_offer"]
+    assert offer[0] == "pick" and "discover" in offer
+    for premature in ("send_email", "send_draft", "mark_applied", "check_replies", "follow_ups", "paste_posting", "report", "prepare"):
+        assert premature not in offer
+
+
+async def test_the_count_in_the_summary_is_the_count_on_the_board(wired, monkeypatch):
+    """Seen live: "10 jobs found" over a table of 9. A record the memory refuses is named, not counted."""
+    real = store.put_safely
+
+    def refuse_one(coll, key, value):
+        if value.get("source") == "discovery" and not getattr(refuse_one, "done", False):
+            refuse_one.done = True
+            return False   # MemoryQuotaError: nothing written
+        return real(coll, key, value)
+    monkeypatch.setattr(store, "put_safely", refuse_one)
+    t, model = wired(search_tools(), canned())
+    out = await run({"inputs": SEARCH_INPUTS, "actions": ["discover"]})
+    r = out["result"]
+    found = [row for row in r["applications"] if row["stage"] == "found"]
+    assert r["summary"].startswith(f"{len(found)} of 3 found so far")
+    assert any("couldn't be saved" in w for w in r.get("could_not") or [])
+
+
+async def test_a_found_job_that_closed_since_the_search_is_not_prepared(wired):
+    memory = found_jobs()
+    closed = "Backend Engineer at Acme. No longer accepting applications. " * 10
+    t, model = wired({"web_fetch": page_fetch({"https://acme.com/jobs/1": closed}), **gmail_none()}, canned())
+    out = await run({"inputs": {}, "memory": {**memory, "last_rows": ["acme.com/jobs/1", "zentrix.ai/careers/2", "nimbus.io/jobs/3"]},
+                     "actions": ["pick"], "action_inputs": {"rows": ["1"]}})
+    row = out["result"]["applications"][0]
+    assert row["stage"] == "closed" and "no longer accepting applications" in row["note"]
+    assert "Tailored" not in model.calls
+
+
+async def test_a_found_job_whose_page_cant_be_reopened_is_prepared_with_a_warning(wired):
+    memory = found_jobs()
+    t, model = wired({"web_fetch": page_fetch({}), **gmail_none()}, canned())
+    out = await run({"inputs": {}, "memory": {**memory, "last_rows": ["acme.com/jobs/1", "zentrix.ai/careers/2", "nimbus.io/jobs/3"]},
+                     "actions": ["pick"], "action_inputs": {"rows": ["1"]}})
+    row = out["result"]["applications"][0]
+    assert row["stage"].startswith("ready") and "re-check" in row["note"]
+    assert out["result"]["_offer"][0] in ("send_email", "mark_applied")
+
+
+async def test_send_and_check_replies_are_offered_only_once_they_can_do_something(wired):
+    memory, c = await prepared(wired)
+    wired(sending(lambda a: {"id": "m1", "threadId": "t1"}), c)
+    out = await run({"inputs": {}, "memory": memory, "actions": ["send_email"], "action_inputs": {"rows": ["1"]}})
+    offer = out["result"]["_offer"]
+    assert "check_replies" in offer and offer[0] in ("check_replies", "send_email")
+
+
+def test_a_prepare_run_with_more_than_one_found_job_lists_each_once():
+    """One LinkedIn posting under two regional hosts is one row."""
+    a = jobs.job_key({"url": "https://in.linkedin.com/jobs/view/software-engineer-at-truscalar-ai-4454193413?trk=x"})
+    b = jobs.job_key({"url": "https://www.linkedin.com/jobs/view/4454193413/"})
+    assert a == b == "linkedin.com/jobs/view/4454193413"
+
+
+# ── A search that keeps going until the person's number is found ─────────────────────────────────────
+@pytest.fixture(autouse=True)
+def unpaced_search(monkeypatch):
+    """A search short of its number tries its whole plan; the fake web answers at once, so its pacing is turned off."""
+    import dataclasses
+    import discover as finder_mod
+    cfg = finder_mod.SCOUT_CONFIG
+    monkeypatch.setattr(finder_mod, "SCOUT_CONFIG", dataclasses.replace(
+        cfg, budget=dataclasses.replace(cfg.budget, min_interval=0.0, max_search_calls=60)))
+
+
+async def test_a_short_search_says_how_far_it_got_and_offers_to_keep_looking(wired):
+    t, model = wired(search_tools(), canned())
+    out = await run({"inputs": {**SEARCH_INPUTS, "count": "10"}, "actions": ["discover"]})
+    r, hunt = out["result"], out["memory"]["hunt"]
+    have = len([row for row in r["applications"] if row["stage"] == "found"])
+    assert have < 10 and r["summary"].startswith(f"{have} of 10 found so far")
+    assert "discover" in r["_keep_running"] and hunt["target"] == 10 and len(hunt["keys"]) == have and not hunt["done"]
+
+
+async def test_the_next_search_looks_only_for_the_jobs_still_missing_and_skips_those_listed(wired, monkeypatch):
+    t, model = wired(search_tools(), canned())
+    first = await run({"inputs": {**SEARCH_INPUTS, "count": "10"}, "actions": ["discover"]})
+    had = first["memory"]["hunt"]["keys"]
+    asked = {}
+    real = agent.finder.search
+
+    async def spy(inputs, memory, **kw):
+        asked.update(count=inputs["count"], listed=kw.get("listed"))
+        return await real(inputs, memory, **kw)
+    monkeypatch.setattr(agent.finder, "search", spy)
+    t, model = wired({**search_tools(), "web_fetch": page_fetch({})}, canned())
+    out = await run({"inputs": {**SEARCH_INPUTS, "count": "10"}, "memory": first["memory"], "actions": ["discover"]})
+    assert asked["count"] == str(10 - len(had)) and len(asked["listed"]) >= len(had)
+    assert out["memory"]["hunt"]["keys"][:len(had)] == had and out["memory"]["hunt"]["runs"] == 2
+
+
+async def test_a_listed_job_that_closed_since_comes_off_and_no_longer_counts(wired, monkeypatch):
+    memory = found_jobs()
+    old = (agent.utcnow() - timedelta(days=1)).isoformat()
+    for k in ("acme.com/jobs/1", "zentrix.ai/careers/2", "nimbus.io/jobs/3"):
+        store.put_safely(store.collection("jobs"), k, {**store.collection("jobs").get(k), "found_at": old})
+    hunt = {"target": 3, "started": agent.utcnow().isoformat(), "keys": ["acme.com/jobs/1", "zentrix.ai/careers/2", "nimbus.io/jobs/3"]}
+    asked = {}
+
+    async def fake_search(inputs, memory, **kw):
+        asked["count"] = inputs["count"]
+        return {"rows": [], "memory": memory, "warnings": [], "error": None, "status": "no_results", "summary": {}}
+    monkeypatch.setattr(agent.finder, "search", fake_search)
+    closed = "Backend Engineer at Acme. No longer accepting applications. " * 5
+    t, model = wired({"web_fetch": page_fetch({"https://acme.com/jobs/1": closed, "https://zentrix.ai/careers/2": POSTING,
+                                               "https://nimbus.io/jobs/3": POSTING})}, canned())
+    out = await run({"inputs": {"count": "3"}, "memory": {**memory, "hunt": hunt}, "actions": ["discover"]})
+    assert asked["count"] == "1" and store.collection("jobs").get("acme.com/jobs/1") is None
+    assert "closed since" in out["result"]["summary"] and out["result"]["summary"].startswith("2 of 3 found so far")
+
+
+async def test_a_full_list_is_not_searched_again(wired, monkeypatch):
+    memory = found_jobs()
+    hunt = {"target": 3, "started": agent.utcnow().isoformat(), "keys": ["acme.com/jobs/1", "zentrix.ai/careers/2", "nimbus.io/jobs/3"]}
+    monkeypatch.setattr(agent.finder, "search", lambda *a, **k: pytest.fail("a full list is not searched"))
+    t, model = wired({"web_fetch": page_fetch({})}, canned())
+    out = await run({"inputs": {"count": "3"}, "memory": {**memory, "hunt": hunt}, "actions": ["discover"]})
+    assert out["result"]["summary"].startswith("All 3 jobs found") and out["memory"]["hunt"]["done"]
+    assert "_keep_running" not in out["result"]
+
+
+async def test_a_scheduled_tick_searches_only_while_a_search_is_short_and_recent(wired, monkeypatch):
+    monkeypatch.setenv("GRAVITY_UNATTENDED", "1")
+    monkeypatch.setattr(agent.finder, "search", lambda *a, **k: pytest.fail("an idle tick never searches"))
+    t, model = wired({}, canned())
+    out = await run({"inputs": {}, "memory": MEMORY, "actions": ["discover"]})
+    assert out["result"]["summary"].startswith("No search is running")
+    done = {"target": 3, "started": agent.utcnow().isoformat(), "keys": ["a", "b", "c"], "have": 3, "done": True}
+    out = await run({"inputs": {}, "memory": {**MEMORY, "hunt": done}, "actions": ["discover"]})
+    assert out["result"]["summary"].startswith("Your list is complete")
+    stale = {"target": 10, "started": (agent.utcnow() - timedelta(days=4)).isoformat(), "keys": ["a"], "have": 6}
+    out = await run({"inputs": {}, "memory": {**MEMORY, "hunt": stale}, "actions": ["discover"]})
+    assert out["result"]["summary"].startswith("Stopped looking after 3 days with 6 of 10") and out["memory"]["hunt"]["stopped"]
+
+
+async def test_a_scheduled_tick_continues_a_short_search(wired, monkeypatch):
+    monkeypatch.setenv("GRAVITY_UNATTENDED", "1")
+    t, model = wired(search_tools(), canned())
+    hunt = {"target": 10, "started": agent.utcnow().isoformat(), "keys": [], "runs": 1}
+    out = await run({"inputs": {**SEARCH_INPUTS, "count": "10"}, "memory": {**MEMORY, "hunt": hunt}, "actions": ["discover"]})
+    assert " of 10 found so far" in out["result"]["summary"] and out["memory"]["hunt"]["runs"] == 2

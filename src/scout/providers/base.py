@@ -42,6 +42,7 @@ class Provider:
     priority: float = 1.0                       # initial search priority
     site: str | None = None                     # the site: operator target
     closed_words: tuple[str, ...] = ()
+    fresh_days: int | None = None               # a copy here older than this is not taken as likely open (None: the policy's)
     internships_only: bool = False
     stats: dict = field(default_factory=dict)
 

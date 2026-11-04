@@ -303,3 +303,18 @@ def test_a_search_result_that_says_closed_is_never_counted():
     assert listing.closed_elsewhere and "no longer accepting applications" in listing.closed_elsewhere
     from verify import verify
     assert verify(listing, None, None, DEFAULT.policy, TODAY).status == "closed"
+
+
+def test_an_unconfirmed_linkedin_find_is_confirmed_on_the_employers_own_page():
+    """0.7.3: a LinkedIn copy past 21 days can't count; the same opening on the employer's Greenhouse page is looked up
+    first and, live there, is what gets shown (verified), not the LinkedIn copy and not nothing."""
+    from fakes import GH_APPLIED, LI_APPLIED, _page, APPLIED_TEXT
+    li = next(r for _, r in RESULTS if r["url"] == LI_APPLIED)
+    gh = next(r for _, r in RESULTS if r["url"] == GH_APPLIED)
+    results = [(("linkedin",), li), (("nimbusai applied ai engineer job careers apply",), gh)]
+    pages = {**PAGES, LI_APPLIED.split("?")[0]: _page("NimbusAI hiring Applied AI Engineer in Pune | LinkedIn",
+                                                      APPLIED_TEXT.replace("Apply for this job", "") + "\nPosted 2 months ago")}
+    out, web, _ = go({**BASE, "count": 3}, web=FakeWeb(results=results, pages=pages))
+    shown = returned(out)
+    assert any(q.lower().startswith("resolve: nimbusai") for q in out.queries)
+    assert [j.verification.status for j in shown] == ["verified_active"] and "greenhouse" in shown[0].source_url
