@@ -81,6 +81,13 @@ Ruling: no `gravity.ask` in discover (`ask=None`): a missing role or years takes
 Ruling: his tests need UTF-8 as the default encoding (they read fixtures without one; the platform runs UTF-8): `PYTHONUTF8=1` for pytest on Windows.
 Seen: his engine sent no second-source traffic when `search_more`, `answers` and `similar` are not set up (the fake raises as the gateway would), and his `enrich` and evaluator treat a failing model as no model, so the demo's stand-in model runs the search code-only.
 Deferred: his `action-url` for a found job on a board copy may be the board's page, not the employer's form; his verification status is shown in the row's note.
+## Tracking without leaving the page (2026-11-04, Arush: "make sure it remains user friendly and the user exp should be smooth while tracking the mails, follow-ups")
+Ruling: a per-row `send_draft` action over a new `send_draft` write (message.send_draft, same account as send, under approvals): the draft goes as the person left it, so an edit in the mailbox is honoured and nothing is rewritten by the agent — if wrong, a person who edited the draft into something unsendable sends it anyway; the approval card shows what goes.
+Ruling: the row carries the latest waiting draft's text and kind, so the page is enough to read it; the mailbox remains the place to edit it.
+Ruling: a draft sent from the row counts as sent unchanged (edit ratio 0), which is the number the drafts-only decision is judged on; one sent from the mailbox is still measured by the daily run.
+Ruling: drafts kept by 0.6.x carry no id; the row says to send those from the mailbox rather than guessing which draft is which.
+Ruling: wording drops "Gmail" everywhere the person reads it ("draft kept", "drafted: send it from the row, or from your mailbox").
+
 2026-11-03, later: dev's platform function runs gravity-schema 0.13.12 (core #661), which does not fill an optional default that needs a place, so the sheet's `default_app: googlesheets` is back in 0.6.1; pushed to dev with the seven real-run fixes (ready, awaiting submit).
 
 ## The first real run (2026-11-03, OpenRouter back; Arush's Gmail on dev's gateway)

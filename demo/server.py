@@ -172,12 +172,33 @@ class DemoIo:
         emit("tool", "sheet", "end", "updated")
         return None
 
+    async def send_draft(self, draft_id: str) -> dict:
+        """The kept draft goes out as it is: it moves from the pretend Drafts to Sent, after the same yes as a send."""
+        box = STATE["mailbox"]
+        d = next((x for x in box["drafts"] if x.get("id") == draft_id), None)
+        if d is None:
+            raise RuntimeError("message.send_draft: the draft is gone")
+        future = LOOP.create_future()
+        PENDING.update({"id": uuid.uuid4().hex[:8], "to": d["to"], "subject": d["subject"], "text": d["text"],
+                        "file": d.get("attachment"), "future": future})
+        emit("gate", "you", "start", f"waiting for your yes: {d['subject']}")
+        if not await future:
+            emit("gate", "you", "end", "not approved")
+            return {"rejected": True}
+        emit("gate", "you", "end", "approved")
+        box["drafts"].remove(d)
+        thread = d.get("thread") or "t-" + uuid.uuid4().hex[:6]
+        box["sent"].append({"messageId": "m-" + uuid.uuid4().hex[:8], "threadId": thread, "sender": ME, "to": d["to"],
+                            "subject": d["subject"], "messageText": d["text"], "messageTimestamp": now().isoformat(), "attachment": d.get("attachment")})
+        return {"id": box["sent"][-1]["messageId"], "thread": thread}
+
     async def draft(self, to: str, subject: str, text: str, thread: str | None = None, file: dict | None = None) -> dict:
         emit("tool", "mail", "start", f"drafting to {to}")
-        STATE["mailbox"]["drafts"].append({"to": to, "subject": subject, "text": text, "thread": thread,
+        did = "d-" + uuid.uuid4().hex[:8]
+        STATE["mailbox"]["drafts"].append({"id": did, "to": to, "subject": subject, "text": text, "thread": thread,
                                            "attachment": (file or {}).get("name"), "at": now().isoformat()})
         emit("tool", "mail", "end", "draft saved" + (" in its thread" if thread else ""))
-        return {"id": "d-" + uuid.uuid4().hex[:6]}
+        return {"id": did}
 
 
 # ── the model, watched: each structured call lights its subagent ───────────────────────────────────────

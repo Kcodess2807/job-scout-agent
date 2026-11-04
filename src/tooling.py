@@ -81,6 +81,21 @@ class Gravity:
         status = str(status or "unknown").lower()
         return {} if status == "invalid" else {"email": email.lower(), "status": status}
 
+    async def send_draft(self, draft_id: str) -> dict:
+        """Sends a draft the agent kept, as the person left it (the `send_draft` write, under approval). {"id", "thread"}
+        once sent; {"rejected": True} when the person said no or nobody answered; RuntimeError when the app refused
+        (the draft is gone: they sent or deleted it themselves)."""
+        try:
+            got = await gravity.act("send_draft", draft={"id": draft_id})
+        except Exception as e:  # noqa: BLE001 - gravity.CallFailed
+            if "APPROVAL_TIMEOUT" in str(e):
+                return {"rejected": True}
+            raise RuntimeError(str(e)[:300]) from None
+        if got.get("rejected"):
+            return {"rejected": True}
+        record = got.get("record") or {}
+        return {"id": record.get("id"), "thread": record.get("thread")}
+
     async def draft(self, to: str, subject: str, text: str, thread: str | None = None, file: dict | None = None) -> dict:
         """A draft in the person's mailbox, in `thread` when given."""
         draft = {"to": [to], "subject": subject, "text": text, **({"thread": thread} if thread else {})}

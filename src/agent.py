@@ -37,7 +37,7 @@ from tooling import make_embedder, make_io, make_model
 PER_RUN = 5            # jobs prepared a run, under the $1 run budget
 PDF_B64_MAX = 400_000  # a bigger PDF is not put in the result (job-scout's cap)
 STAGES = {"found": "found", "to_prepare": "to prepare", "needs_text": "needs the posting's text", "closed": "closed", "docs_ready": "ready to send",
-          "draft_kept": "draft in your Gmail", "sent": "emailed", "applied": "applied", "replied": "replied",
+          "draft_kept": "draft kept", "sent": "emailed", "applied": "applied", "replied": "replied",
           "done": "closed"}
 
 
@@ -108,6 +108,20 @@ LAYOUT = [{"type": "cards", "key": "applications", "caption": "Your applications
            "action": {"label": "Open the posting", "href": "apply_link"}}]
 
 
+def latest_draft(a: dict) -> dict | None:
+    """The draft the agent kept that still waits for the person: a reply to their last mail, else the newest follow-up
+    not yet sent, else the application itself when a send was refused. {kind, text, id, where} or None."""
+    r = a.get("reply_draft") or {}
+    if r.get("text") and not r.get("sent_at"):
+        return {"kind": "reply", "text": r["text"], "id": r.get("id"), "where": "reply_draft"}
+    for d in reversed(a.get("follow_up_drafts") or []):
+        if not d.get("sent_at"):
+            return {"kind": f"follow-up {d.get('n', 1)}", "text": d.get("text") or "", "id": d.get("id"), "where": "follow_up"}
+    if a.get("stage") == "draft_kept" and a.get("draft_text"):
+        return {"kind": "the application", "text": a["draft_text"], "id": a.get("draft_id"), "where": "application"}
+    return None
+
+
 def board(all_jobs: dict, apps: dict, pdfs: dict | None = None, updates: dict | None = None) -> tuple[list[dict], list[str]]:
     """(the table every result shows, its keys in row order): every job, in the order it arrived, with its application
     when it has one, so a row number means the same job in every result. It is the only table in any result: a
@@ -128,6 +142,7 @@ def board(all_jobs: dict, apps: dict, pdfs: dict | None = None, updates: dict | 
                "email": f"{e['subject']}\n\n{e['body']}" if e.get("body") else "",
                "email_problems": "; ".join(e.get("problems") or []), "lines_dropped": a.get("lines_dropped", 0),
                "cover_letter": a.get("letter") or "", "letter_problems": "; ".join(a.get("letter_problems") or []),
+               "draft": (d := latest_draft(a)) and d["text"] or "", "draft_kind": d["kind"] if d else "",
                "note": a.get("note") or "",
                "update": (updates or {}).get(a["key"], "")}
         if pdfs and a["key"] in pdfs:
@@ -443,11 +458,11 @@ async def graph():
         return {"emails": entries, "sent_today": sent_today}
 
     async def keep_draft(e: dict) -> None:
-        await io.draft(e["to"], e["subject"], e["body"], file=e.get("attachment"))
+        rec = await io.draft(e["to"], e["subject"], e["body"], file=e.get("attachment"))
         coll = store.collection("applications")
         for k in e["keys"]:
             if a := coll.get(k):
-                store.put_safely(coll, k, {**a, "stage": "draft_kept", "draft_text": e["body"],
+                store.put_safely(coll, k, {**a, "stage": "draft_kept", "draft_text": e["body"], "draft_id": rec.get("id"),
                                            "draft_kept_at": utcnow().isoformat()})
 
     async def send(state: State):
@@ -584,21 +599,23 @@ async def graph():
                         pdf = base64.b64encode(tailor.pdf_bytes(tailor.ResumeDoc(**a["resume"]))).decode("ascii")
                         file = {"name": tailor.pdf_name(p, a["company"], a["title"]), "data": pdf}
                     subject = m["subject"] if m["subject"].lower().startswith("re:") else f"Re: {m['subject']}"
-                    await io.draft(sender, subject, outreach.wrap(body, p, name), thread=m["thread"], file=file)
+                    text = outreach.wrap(body, p, name)
+                    rec = await io.draft(sender, subject, text, thread=m["thread"], file=file)
+                    upd["reply_draft"] = {"id": rec.get("id"), "text": text, "to": sender, "kind": kind, "at": utcnow().isoformat()}
                     drafted += 1
-                    draft_note = " A reply is drafted in your Gmail, in the thread."
+                    draft_note = " A reply is drafted: send it from the row, or from your mailbox."
                 if kind != "rejection":
                     line = f"{head}: {kind.replace('_', ' ')}. {m['from']} wrote: \"{words[:200]}\".{draft_note}{why}"
             if line:
                 needs.append((replies.NEEDS_YOU.index(kind) if kind in replies.NEEDS_YOU else 99, line))
             for b in mates:
                 changed[b["key"]] = {**b, **upd, "seen": (b.get("seen") or []) + [m["id"]]}
-                updates[b["key"]] = f"{kind.replace('_', ' ')}" + (": reply drafted in Gmail" if draft_note else "")
+                updates[b["key"]] = f"{kind.replace('_', ' ')}" + (": reply drafted" if draft_note else "")
         for k, a in changed.items():
             store.put_safely(coll, k, a)
         lines = [x for _, x in sorted(needs, key=lambda n: n[0])]
         notes = await sheet(list(changed.values()))
-        return with_board(f"{len(lines)} need you, {drafted} repl{'ies' if drafted != 1 else 'y'} drafted in Gmail.",
+        return with_board(f"{len(lines)} need you, {drafted} repl{'ies' if drafted != 1 else 'y'} drafted.",
                           notebook, updates, lines, extra={"could_not": notes} if notes else None)
 
     # ── follow_ups: drafts only (a scheduled run never waits on an approval) ───────────────────────────
@@ -676,15 +693,61 @@ async def graph():
                 continue
             subject = e.get("subject") or outreach.subject([a.get("title") or ""], a.get("company") or "")
             text = outreach.wrap(body, p, e.get("to_name") or c.get("name") or "")
-            await io.draft(to, f"Re: {subject}" if a.get("thread") else subject, text, thread=a.get("thread"))
-            changed[k]["follow_up_drafts"] = [*(a.get("follow_up_drafts") or []), {"n": n, "at": now.isoformat(), "text": text}]
+            rec = await io.draft(to, f"Re: {subject}" if a.get("thread") else subject, text, thread=a.get("thread"))
+            changed[k]["follow_up_drafts"] = [*(a.get("follow_up_drafts") or []),
+                                              {"n": n, "at": now.isoformat(), "text": text, "id": rec.get("id"), "to": to}]
             drafts += 1
             label = {"follow_up_1": "follow-up 1", "follow_up_2": "follow-up 2", "applied": "a follow-up"}[what]
-            updates[k] = f"{label} drafted in your Gmail" + (", in the thread" if a.get("thread") else "")
+            updates[k] = f"{label} drafted" + (", in the thread" if a.get("thread") else "") + ": send it from the row, or from your mailbox"
         for k, a in changed.items():
             store.put_safely(coll, k, a)
         notes = await sheet(list(changed.values()))
-        return with_board(f"{drafts} follow-up draft{'s' if drafts != 1 else ''} ready in Gmail.", notebook, updates, needs,
+        return with_board(f"{drafts} follow-up draft{'s' if drafts != 1 else ''} ready to send.", notebook, updates, needs,
+                          extra={"could_not": notes} if notes else None)
+
+    # ── send_draft: the draft the agent kept for a row goes out as the person left it, after their approval ──
+    async def send_draft(state: State):
+        coll, updates, needs = store.collection("applications"), {}, []
+        now = utcnow()
+        for k in picked_keys(state):
+            a = coll.get(k)
+            if not a:
+                continue
+            d = latest_draft(a)
+            head = f"{a.get('company') or ''}, {a.get('title') or ''}"
+            if not d:
+                updates[k] = "nothing drafted for this one"
+                continue
+            if not d.get("id"):
+                updates[k] = f"{d['kind']} was drafted before drafts were remembered: send it from your mailbox"
+                continue
+            try:
+                got = await io.send_draft(d["id"])
+            except RuntimeError as err:
+                updates[k] = f"couldn't send {d['kind']}: {str(err)[:160]}"
+                needs.append(f"{head}: the draft is gone from your mailbox, so it was probably sent or deleted there. {str(err)[:120]}")
+                continue
+            if got.get("rejected"):
+                updates[k] = f"{d['kind']}: not approved; it stays in your mailbox"
+                continue
+            stamp = now.isoformat()
+            if d["where"] == "application":
+                a = {**a, "stage": "sent", "sent_by": "gravity", "sent_at": stamp, "thread": got.get("thread") or a.get("thread"),
+                     "message_id": got.get("id"), "sent_text": d["text"], "follow_ups": 0}
+            elif d["where"] == "follow_up":
+                drafts_ = [dict(x) for x in a.get("follow_up_drafts") or []]
+                for x in reversed(drafts_):
+                    if not x.get("sent_at"):
+                        x.update({"sent_at": stamp, "edit_ratio": 0.0, "sent_by": "gravity"})
+                        break
+                a = {**a, "follow_up_drafts": drafts_, "last_touch_at": stamp}
+            else:
+                a = {**a, "reply_draft": {**a["reply_draft"], "sent_at": stamp}, "last_touch_at": stamp}
+            store.put_safely(coll, k, a)
+            updates[k] = f"{d['kind']} sent"
+        sent = sum(u.endswith(" sent") for u in updates.values())
+        notes = await sheet([a for k in updates if (a := coll.get(k))])
+        return with_board(f"{sent} draft{'s' if sent != 1 else ''} sent.", state.get("memory") or {}, updates, needs,
                           extra={"could_not": notes} if notes else None)
 
     # ── report: where every application stands, folded from memory ───────────────────────────────────
@@ -774,15 +837,15 @@ async def graph():
             waiting = any(j.get("picked", True) and k not in apps for k, j in store.collection("jobs").find(limit=5000))
             if not waiting:
                 return "discover"
-        return {"paste_posting": "paste_posting", "send_email": "draft", "mark_applied": "mark_applied",
+        return {"paste_posting": "paste_posting", "send_email": "draft", "send_draft": "send_draft", "mark_applied": "mark_applied",
                 "not_applying": "not_applying", "check_replies": "check_replies", "follow_ups": "follow_ups",
                 "report": "report", "discover": "discover", "pick": "pick"}.get(first, "prepare")
 
     nodes = {"prepare": prepare, "paste_posting": paste_posting, "draft": draft, "send": send, "keep": keep,
-             "mark_applied": mark_applied, "not_applying": not_applying, "check_replies": check_replies,
-             "follow_ups": follow_ups, "report": report, "discover": discover, "pick": pick}
-    entries = ("prepare", "paste_posting", "draft", "mark_applied", "not_applying", "check_replies", "follow_ups", "report",
-               "discover", "pick")
+             "send_draft": send_draft, "mark_applied": mark_applied, "not_applying": not_applying,
+             "check_replies": check_replies, "follow_ups": follow_ups, "report": report, "discover": discover, "pick": pick}
+    entries = ("prepare", "paste_posting", "draft", "send_draft", "mark_applied", "not_applying", "check_replies", "follow_ups",
+               "report", "discover", "pick")
     wf = StateGraph(State)
     for name, fn in nodes.items():
         wf.add_node(name, fn)
@@ -791,6 +854,6 @@ async def graph():
     wf.add_edge("pick", "prepare")
     wf.add_edge("draft", "send")
     wf.add_edge("send", "keep")
-    for name in ("prepare", "keep", "mark_applied", "not_applying", "check_replies", "follow_ups", "report", "discover"):
+    for name in ("prepare", "keep", "send_draft", "mark_applied", "not_applying", "check_replies", "follow_ups", "report", "discover"):
         wf.add_edge(name, END)
     return wf.compile()

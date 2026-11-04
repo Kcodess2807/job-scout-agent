@@ -84,9 +84,18 @@ class FakeIo:
         return got if isinstance(got, str) else None
 
     async def draft(self, to, subject, text, thread=None, file=None):
-        self._tool("gmail_draft")({"recipient_email": to, "subject": subject, "body": text, "is_html": False,
-                                   **({"thread_id": thread} if thread else {}), **({"attachment": file} if file else {})})
-        return {"id": "d1"}
+        got = self._tool("gmail_draft")({"recipient_email": to, "subject": subject, "body": text, "is_html": False,
+                                         **({"thread_id": thread} if thread else {}), **({"attachment": file} if file else {})})
+        return {"id": (got or {}).get("id") or "d1"}
+
+    async def send_draft(self, draft_id):
+        """The `send_draft` write (message.send_draft): the fake endpoint answers {id, threadId}, a refusal string, or an error."""
+        got = self._tool("gmail_send_draft")({"draft_id": draft_id})
+        if isinstance(got, str):
+            if "APPROVAL_REJECTED" in got or "APPROVAL_TIMEOUT" in got:
+                return {"rejected": True}
+            raise RuntimeError(got)
+        return {"id": (got or {}).get("id"), "thread": (got or {}).get("threadId")}
 
 
 class FakeModel:
@@ -484,7 +493,9 @@ async def test_a_day_4_note_is_drafted_in_the_thread_and_nothing_is_sent(wired):
     assert d["thread_id"] == "t1" and d["recipient_email"] == "priya@blacksmith.sh"
     assert d["subject"] == "Re: Application for Backend Engineer at Blacksmith" and d["body"].startswith("Hi Priya,")
     assert store.collection("applications").get("a")["follow_ups"] == 1
-    assert out["result"]["applications"][0]["update"] == "follow-up 1 drafted in your Gmail, in the thread"
+    assert out["result"]["applications"][0]["update"] == "follow-up 1 drafted, in the thread: send it from the row, or from your mailbox"
+    row = out["result"]["applications"][0]
+    assert row["draft_kind"] == "follow-up 1" and row["draft"].startswith("Hi Priya")   # the draft waits on the row too
 
 
 async def test_a_reply_already_in_the_thread_stops_the_follow_up_and_asks_for_you(wired):
@@ -779,3 +790,71 @@ async def test_an_optional_search_source_that_is_not_connected_is_asked_once(wir
     out = await run({"inputs": SEARCH_INPUTS, "memory": {}, "actions": ["discover"]})
     assert calls.count("search_more") <= 1
     assert out["result"]["applications"]
+
+
+# ── Send the draft: a kept draft goes out from the row, after approval ──────────────────────────────
+def draft_tools(answer, drafts=None):
+    return {"gmail_draft": lambda a: {"id": f"d{len(drafts) + 1 if drafts is not None else 1}"},
+            "gmail_send_draft": answer, "gmail_read": lambda a: {"messages": []},
+            "gmail_send": lambda a: pytest.fail("Send the draft never sends a new email")}
+
+
+async def test_the_application_kept_as_a_draft_is_sent_from_the_row_after_approval(wired):
+    memory, c = await prepared(wired)
+    wired(sending(lambda a: "APPROVAL_REJECTED: the person said no"), c)
+    out = await run({"inputs": {}, "memory": memory, "actions": ["send_email"], "action_inputs": {"rows": ["1"]}})
+    row = out["result"]["applications"][0]
+    assert row["stage"] == "draft kept" and row["draft_kind"] == "the application" and row["draft"].startswith("Hi there")
+    t, _ = wired(draft_tools(lambda a: {"id": "m9", "threadId": "t9"}), c)
+    out = await run({"inputs": {}, "memory": out["memory"], "actions": ["send_draft"], "action_inputs": {"rows": ["1"]}})
+    assert t["gmail_send_draft"].calls == [{"draft_id": "d1"}]
+    app = store.collection("applications").get("blacksmith.sh/careers/be")
+    assert (app["stage"], app["sent_by"], app["thread"], app["follow_ups"]) == ("sent", "gravity", "t9", 0)
+    assert out["result"]["applications"][0]["update"] == "the application sent" and out["result"]["summary"] == "1 draft sent."
+
+
+async def test_a_follow_up_draft_is_sent_from_the_row_and_counts_as_sent_unchanged(wired):
+    t, _ = wired(fu_tools(), {writer.Body: FOLLOW})
+    t["gmail_draft"] = Tool("gmail_draft", lambda a: {"id": "fu1"})
+    put_app("a", stage="sent", thread="t1", sent_at=ago(4), email=NOTE_EMAIL, contact={"email": "priya@blacksmith.sh"})
+    out = await run({"memory": MEMORY, "inputs": {}, "actions": ["follow_ups"]})
+    assert store.collection("applications").get("a")["follow_up_drafts"][0]["id"] == "fu1"
+    t, _ = wired(draft_tools(lambda a: {"id": "m2", "threadId": "t1"}), {})
+    out = await run({"memory": out["memory"], "inputs": {}, "actions": ["send_draft"], "action_inputs": {"rows": ["1"]}})
+    d = store.collection("applications").get("a")["follow_up_drafts"][0]
+    assert d["sent_at"] and d["edit_ratio"] == 0.0 and t["gmail_send_draft"].calls == [{"draft_id": "fu1"}]
+    assert out["result"]["applications"][0]["update"] == "follow-up 1 sent"
+    assert out["result"]["applications"][0]["draft"] == ""                      # nothing waits any more
+
+
+async def test_a_drafted_reply_waits_on_the_row_and_goes_out_from_it(wired):
+    memory, c = await sent_and_applied(wired)
+    words = "Can we talk on Friday about the Backend Engineer role?"
+    c.update({replies.Reading: reading("interview", words),
+              replies.Reply: replies.Reply(body="Thank you for writing. I would be glad to talk. Could you share two or three times that suit you?")})
+    t, _ = wired({**inbox_tools(), "gmail_draft": lambda a: {"id": "r1"}}, c)
+    out = await run({"memory": memory, "inputs": event({"thread_id": "t1", "from": "Priya <hr@blacksmith.sh>", "subject": "Re: Application", "text": words})})
+    row = out["result"]["applications"][0]
+    assert row["draft_kind"] == "reply" and "glad to talk" in row["draft"] and row["update"] == "interview: reply drafted"
+    assert "send it from the row" in out["result"]["needs_you"][0]
+    t, _ = wired(draft_tools(lambda a: {"id": "m3", "threadId": "t1"}), c)
+    out = await run({"memory": out["memory"], "inputs": {}, "actions": ["send_draft"], "action_inputs": {"rows": ["1"]}})
+    assert t["gmail_send_draft"].calls == [{"draft_id": "r1"}]
+    assert store.collection("applications").get("blacksmith.sh/careers/be")["reply_draft"]["sent_at"]
+    assert out["result"]["applications"][0]["update"] == "reply sent" and out["result"]["applications"][0]["draft"] == ""
+
+
+async def test_send_the_draft_refused_or_gone_says_so_and_changes_nothing(wired):
+    memory, c = await prepared(wired)
+    wired(sending(lambda a: "APPROVAL_REJECTED: no"), c)
+    out = await run({"inputs": {}, "memory": memory, "actions": ["send_email"], "action_inputs": {"rows": ["1"]}})
+    wired(draft_tools(lambda a: "APPROVAL_REJECTED: the person said no"), c)
+    out = await run({"inputs": {}, "memory": out["memory"], "actions": ["send_draft"], "action_inputs": {"rows": ["1"]}})
+    assert out["result"]["applications"][0]["update"] == "the application: not approved; it stays in your mailbox"
+    assert store.collection("applications").get("blacksmith.sh/careers/be")["stage"] == "draft_kept"
+    wired(draft_tools(lambda a: "message.send_draft on gmail: draft not found"), c)
+    out = await run({"inputs": {}, "memory": out["memory"], "actions": ["send_draft"], "action_inputs": {"rows": ["1"]}})
+    assert out["result"]["applications"][0]["update"].startswith("couldn't send the application")
+    assert "probably sent or deleted there" in out["result"]["needs_you"][0]
+    out = await run({"inputs": {}, "memory": out["memory"], "actions": ["send_draft"], "action_inputs": {"rows": ["2"]}})
+    assert out["result"]["applications"][1]["update"] == "nothing drafted for this one"

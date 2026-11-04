@@ -201,6 +201,17 @@ two above: my default), the `needs_you` ordering, the Exa fallback when the comp
   a person) and `follow_ups.replies_after_one`: the numbers behind "which first email works" and "do follow-ups
   help", which decide whether follow-ups stay drafts.
 
+## 16. Tracking without leaving the page, 2026-11-04
+
+Arush: the tracking must stay user-friendly. Before, a drafted reply or follow-up existed only in the mailbox: the page
+said one was there, and the person went to Gmail to read and send it. Now every draft the agent keeps is remembered
+with its id (`draft_id` on the application, `id` on each follow-up draft, `reply_draft` for an answer), the row carries
+the latest one waiting (`draft`, `draft_kind`: "reply", "follow-up 1", "the application"), and a per-row **Send the
+draft** sends it through the `send_draft` write (message.send_draft, Gmail or Outlook, under approval) as the person
+left it. Sent that way, a follow-up counts as sent unchanged; the application becomes "emailed" with its thread; a reply
+is marked sent on the row. Drafts kept before this version have no id and say so: send those from the mailbox. Wording
+no longer names Gmail: the mailbox may be Outlook.
+
 ## 15. The same code on every mail app, 2026-11-03
 
 Arush: the point of v2 is that the person picks the apps, so nothing may assume Gmail. The agent read mail with Gmail's

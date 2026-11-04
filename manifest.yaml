@@ -1,6 +1,6 @@
 contract: v2
 name: applyzer
-version: 0.6.1
+version: 0.7.0
 description: "Finds live jobs that fit your resume, or takes the ones you paste. Tailors your resume and cover letter to each job from your own facts only and sends the application when you approve it, to a recruiter it finds on the company's own pages. Tracks replies in your inbox: drafts your answers, follows up when nobody writes back, and reports each week which emails get answered."
 
 kind: interactive
@@ -134,6 +134,10 @@ writes:
     capability: message.create
     label: "Drafts, in the same account"
     same_as: send
+  send_draft:
+    capability: message.send_draft
+    label: "Sends a draft it kept for you (a reply, a follow-up, the application), when you approve it"
+    same_as: send
   tracker:
     capability: row.upsert
     default_app: googlesheets   # dev runs gravity-schema 0.13.10+: an optional default that needs a place is not filled in uninvited
@@ -141,7 +145,7 @@ writes:
     required: false
 
 approvals:
-  required_for: [message.send]
+  required_for: [message.send, message.send_draft]
 
 triggers:
   manual: true
@@ -165,6 +169,9 @@ actions:
         label: "The posting's text"
   - name: send_email
     label: "Send"
+    per_row: true
+  - name: send_draft
+    label: "Send the draft"
     per_row: true
   - name: mark_applied
     label: "I applied"
