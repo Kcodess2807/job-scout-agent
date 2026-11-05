@@ -840,6 +840,28 @@ async def graph():
                    if n else "No job found that fits well enough this run.")
         return with_board(summary, notebook, updates, extra={"could_not": got["warnings"]} if got["warnings"] else None)
 
+    # ── add_address: the person names who a prepared application goes to, when the search found nobody ───────────
+    async def add_address(state: State):
+        addr = ((state.get("action_inputs") or {}).get("email") or "").strip()
+        memory = state.get("memory") or {}
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", addr):
+            return with_board("That doesn't read as an email address; nothing changed.", memory)
+        coll, updates = store.collection("applications"), {}
+        apps = dict(coll.find(limit=store.FIND_CAP))
+        for k in picked_keys(state):
+            a = apps.get(k)
+            if not a or a.get("stage") not in ("docs_ready", "draft_kept"):
+                continue
+            # two roles at one company share the email: the address is theirs too
+            for b in [x for x in apps.values() if x["key"] == k or (a.get("group") and x.get("group") == a["group"])]:
+                b["contact"] = {**(b.get("contact") or {}), "email": addr, "how": "given by you", "note": ""}
+                if b.get("email"):
+                    b["email"] = {**b["email"], "to": addr}
+                store.put_safely(coll, b["key"], b)
+                updates[b["key"]] = f"goes to {addr}: press Send"
+        return with_board(f"Address added to {len(updates)} application{'s' if len(updates) != 1 else ''}. Press Send on the row; it waits for your approval."
+                          if updates else "Pick a prepared row to add an address to.", memory, updates)
+
     async def pick(state: State):
         coll, keys = store.collection("jobs"), picked_keys(state)
         for k in keys:
@@ -863,13 +885,14 @@ async def graph():
                 return "discover"
         return {"paste_posting": "paste_posting", "send_email": "draft", "send_draft": "send_draft", "mark_applied": "mark_applied",
                 "not_applying": "not_applying", "check_replies": "check_replies", "follow_ups": "follow_ups",
-                "report": "report", "discover": "discover", "pick": "pick"}.get(first, "prepare")
+                "report": "report", "discover": "discover", "pick": "pick", "add_address": "add_address"}.get(first, "prepare")
 
     nodes = {"prepare": prepare, "paste_posting": paste_posting, "draft": draft, "send": send, "keep": keep,
              "send_draft": send_draft, "mark_applied": mark_applied, "not_applying": not_applying,
-             "check_replies": check_replies, "follow_ups": follow_ups, "report": report, "discover": discover, "pick": pick}
+             "check_replies": check_replies, "follow_ups": follow_ups, "report": report, "discover": discover, "pick": pick,
+             "add_address": add_address}
     entries = ("prepare", "paste_posting", "draft", "send_draft", "mark_applied", "not_applying", "check_replies", "follow_ups",
-               "report", "discover", "pick")
+               "report", "discover", "pick", "add_address")
     wf = StateGraph(State)
     for name, fn in nodes.items():
         wf.add_node(name, fn)
@@ -878,6 +901,6 @@ async def graph():
     wf.add_edge("pick", "prepare")
     wf.add_edge("draft", "send")
     wf.add_edge("send", "keep")
-    for name in ("prepare", "keep", "send_draft", "mark_applied", "not_applying", "check_replies", "follow_ups", "report", "discover"):
+    for name in ("prepare", "keep", "send_draft", "mark_applied", "not_applying", "check_replies", "follow_ups", "report", "discover", "add_address"):
         wf.add_edge(name, END)
     return wf.compile()

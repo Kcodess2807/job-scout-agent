@@ -81,6 +81,11 @@ Ruling: no `gravity.ask` in discover (`ask=None`): a missing role or years takes
 Ruling: his tests need UTF-8 as the default encoding (they read fixtures without one; the platform runs UTF-8): `PYTHONUTF8=1` for pytest on Windows.
 Seen: his engine sent no second-source traffic when `search_more`, `answers` and `similar` are not set up (the fake raises as the gateway would), and his `enrich` and evaluator treat a failing model as no model, so the demo's stand-in model runs the search code-only.
 Deferred: his `action-url` for a found job on a board copy may be the board's page, not the employer's form; his verification status is shown in the row's note.
+## "When I click Prepare this one it should draft a mail for me" (2026-11-05, Arush, on the demo)
+Finding: the mail was drafted (`write_emails` writes one for every prepared company, addressed or not), but a row with no recruiter address read "ready: no address yet" and offered only I applied and Not applying: the draft sat behind Details and had nowhere to go.
+Fix (0.7.5): `add_address`, per row, takes an email address from the person; the application (and a role that shares its email) gets it as its contact ("given by you") and reads "ready to send", so Send, and its approval, follow as for any other. An input that is not an address changes nothing and says so.
+Still open: the web view in core (applyzer-actions.ts) offers no Add an address yet; add it when 0.7.5 goes to Gravity.
+
 ## "Got the jobs, no option to send" (2026-11-04, Arush, on the admin's Try it panel)
 Finding: the page drew the platform's composed screen, not this agent's board: apps/api composes a layout for every finished run and puts the action buttons inside it, so core #665's offer-only rule never applied. On the composed screen the cards cannot be selected, so Prepare this one, Send, I applied and Not applying had no row. Asked in the Reply box to "send application to these", the chat started a new run with the message; `route()` saw a default run with nothing pasted and nothing picked, and searched again.
 Fix (core #670, #671): applyzer's view owns its screen on every page; the admin run panel hands the view a way to start actions, so the row buttons work there too.

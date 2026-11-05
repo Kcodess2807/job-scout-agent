@@ -722,6 +722,18 @@ def test_a_typed_message_naming_a_job_on_the_board_picks_that_row():
     assert agent.picked_keys({"memory": mem, "inputs": {"message": "Backend Engineer · Blacksmith"}, "action_inputs": {"rows": ["2"]}}) == ["b"]
 
 
+async def test_an_address_the_person_gives_makes_a_prepared_application_sendable(wired):
+    wired({}, {})
+    put_app("a", stage="docs_ready", contact={"note": "nobody found"}, email={"kind": "application", "to": None, "subject": "Application", "body": "Hello"})
+    state = {"memory": {**MEMORY, "last_rows": ["a"]}, "inputs": {}, "actions": ["add_address"]}
+    out = await run({**state, "action_inputs": {"rows": ["1"], "email": "not an address"}})
+    assert out["result"]["summary"].startswith("That doesn't read as an email address") and out["result"]["applications"][0]["stage"] == "ready: no address yet"
+    out = await run({**state, "action_inputs": {"rows": ["1"], "email": "hr@blacksmith.sh"}})
+    row, app = out["result"]["applications"][0], store.collection("applications").get("a")
+    assert row["stage"] == "ready to send" and row["contact"] == "hr@blacksmith.sh (given by you)" and row["update"] == "goes to hr@blacksmith.sh: press Send"
+    assert app["email"]["to"] == "hr@blacksmith.sh" and app["contact"]["how"] == "given by you"
+
+
 async def test_the_weekly_report_counts_follow_ups_drafted_sent_and_unchanged(wired):
     wired(fu_tools(), {})
     put_app("a", stage="sent", sent_at=ago(9), follow_ups=2,

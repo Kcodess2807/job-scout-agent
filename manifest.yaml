@@ -1,6 +1,6 @@
 contract: v2
 name: applyzer
-version: 0.7.4
+version: 0.7.5
 description: "Finds live jobs that fit your resume, or takes the ones you paste. Tailors your resume and cover letter to each job from your own facts only and sends the application when you approve it, to a recruiter it finds on the company's own pages. Tracks replies in your inbox: drafts your answers, follows up when nobody writes back, and reports each week which emails get answered."
 
 kind: interactive
@@ -158,6 +158,14 @@ actions:
   - name: send_draft
     label: "Send the draft"
     per_row: true
+  - name: add_address
+    label: "Add an address"
+    per_row: true
+    inputs:
+      - name: email
+        type: email
+        label: "Who it goes to: their email address"
+        required: true
   - name: mark_applied
     label: "I applied"
     per_row: true

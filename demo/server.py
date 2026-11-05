@@ -432,9 +432,9 @@ class Handler(BaseHTTPRequestHandler):
             elif url.path == "/api/run":
                 action = body.get("action")
                 if action not in ("prepare", "paste_posting", "send_email", "mark_applied", "not_applying",
-                                  "check_replies", "follow_ups", "report", "discover", "pick"):
+                                  "check_replies", "follow_ups", "report", "discover", "pick", "add_address"):
                     raise ValueError("unknown action")
-                ai = {k: body[k] for k in ("text", "applied_on") if body.get(k)}
+                ai = {k: body[k] for k in ("text", "applied_on", "email") if body.get(k)}
                 if body.get("row"):
                     ai["rows"] = [str(body["row"])]
                 start(action, action_inputs=ai)
