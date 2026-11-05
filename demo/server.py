@@ -51,6 +51,12 @@ import tailor  # noqa: E402
 import writer  # noqa: E402
 from candidate import Profile  # noqa: E402
 
+import tooling  # noqa: E402
+
+# The demo runs on the agent's own local stand-ins, as the tests do: the platform SDK (installed in this venv for
+# `gravity run`) keeps its own local memory, which wants the manifest's collections declared to it.
+tooling.gravity = store.gravity = None
+
 KEY = secrets.token_urlsafe(9)
 LOCK = threading.Lock()
 EVENTS: list[dict] = []
