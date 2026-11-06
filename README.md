@@ -41,10 +41,19 @@ pages into fields and write prose. Code decides everything else: what runs, what
 | **Paste the posting** (per row) | For a page the reader could not open (LinkedIn's sign-in wall, Indeed): the candidate pastes the text and it is prepared. |
 | **Check replies** | Started by the mail trigger when a reply lands, or by hand. Matches mail by thread; for an applied job also by the company's domain or a known ATS sender naming the company. Anything else is ignored, never classified. Rules first (bounce, out of office, auto-acknowledgement, opt-out), then the model: interview, online test, offer, rejection, question, status update (the ATS says the application moved or is under review: recorded on the row, nothing asked of the candidate), other. Interview and offer get a drafted reply in the thread, shown on the row and sendable from it; a recruiter's question is answered from the candidate's own answers when they cover it ("send your CV" attaches the resume); a rejection gets a two-line thanks with a referral ask. An opt-out suppresses the company. |
 | **Follow-ups** (daily, 09:00) | Drafts only, by decision (below). Application email: day 7 and 14. Short note: day 4 and 10. Closed at 21 with no email. A form application with no thread: one note at day 7, only to an address that came with the job. Before each draft the thread is checked: anyone else's message since the send stops it. Drafts the candidate sent by hand are found in Sent and measured for how much they were changed. Each follow-up is given what was already written to that company, so it adds one new thing instead of repeating the first email. |
+| **Find a referral / Send the note** (per row) | People at the company in or near the role (Apollo), what they share with the candidate (schools and employers compared in code from their public LinkedIn profile), a checked note to each. With an address it is a draft sent on approval, one a company a week; without one it is shown to paste into LinkedIn. A reply is recorded and put in front of the person. |
+| **New jobs every morning** (a schedule the person turns on) | The last search again; says what is new. Skipped while 20 found jobs wait. |
+| **Similar companies** (per row) | Open roles like this one at lookalike companies (PredictLeads). |
+| **Answer the form** (per row) | The application form's questions: filled from the person's details, open ones drafted from the resume and fact-checked, personal ones left to them. |
+| **I interviewed** (per row) | Notes go on the timeline, a thank-you is drafted, and one check-in is drafted after 5 quiet days. |
 | **Weekly report** (Monday 09:00) | Counts by stage, sends and replies this week; over all time, how many application emails and how many notes to a person were answered and the median days to a reply; how many follow-up drafts the candidate sent, how many unchanged, and how many replies came after one. |
 
+Every found job carries a reading of whether it is real (how long the company has really listed it, re-posts, whether it is on the company's own list, layoffs in the news); a doubt is shown, never acted on.
+
 Every result shows one table, the applications, in a fixed order, with an `update` column for what that run did to
-each row. Per-row buttons act on that table's row numbers, so the order never changes between results.
+each row. A row that went out also carries its `history` (every dated event: the send and by whom,
+each follow-up drafted and sent, their reply in their words, the drafted answer, a close), `next` (what happens next and
+on which day) and `tracking`, the same as plain dated lines. Per-row buttons act on that table's row numbers, so the order never changes between results.
 
 ### The seam for discovery
 
@@ -177,8 +186,8 @@ All in `docs/ledger.md` with the reasoning. The ones a teammate should know:
 - **The real model has never run the prompts.** Read ten tailored resumes and letters before trusting them.
 - **The search has its own unknowns**, in his README's "Known limitations": no live run, web search as the only
   discovery (no job API in v2), LinkedIn and Indeed pages unreadable from a datacenter, an uncalibrated score.
-- **Not built, by design:** the application form, LinkedIn and X, calendar slots, the interview prep pack, project
-  ideas with a starter repo, the funded-startup lane.
+- **Not built, by design:** submitting the application form, LinkedIn and X messaging, calendar slots, the interview
+  prep pack (applyzer-interview has it), project ideas with a starter repo, a funded-startup lane.
 - **Eight deferred minor issues** at the end of `docs/ledger.md`, for example: a two-role email attaches only the
   clicked row's resume; "closed to new applicants after 30 Nov" on a live posting reads as closed.
 - **Hunter has not run.** The built-ins are declared and the answer is read tolerantly (the first `email` and

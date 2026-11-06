@@ -81,6 +81,15 @@ class Gravity:
         status = str(status or "unknown").lower()
         return {} if status == "invalid" else {"email": email.lower(), "status": status}
 
+    async def built_in(self, name: str, **args) -> dict:
+        """A read on Gravity's own accounts (Apollo, PredictLeads, a public LinkedIn profile): {} when it is off or failed,
+        so a run with less data still runs."""
+        try:
+            got = await gravity.built_in(name, **args)
+        except Exception:  # noqa: BLE001 - gravity.CallFailed
+            return {}
+        return got if isinstance(got, dict) else {}
+
     async def send_draft(self, draft_id: str) -> dict:
         """Sends a draft the agent kept, as the person left it (the `send_draft` write, under approval). {"id", "thread"}
         once sent; {"rejected": True} when the person said no or nobody answered; RuntimeError when the app refused

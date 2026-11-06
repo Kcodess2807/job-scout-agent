@@ -519,3 +519,140 @@ def test_a_must_have_matches_the_resume_under_its_other_name():
     # a real posting (Aries, 2026-11-03) listed "Go (Golang)", "SQL/NoSQL", "AWS/GCP/Azure": any one alternate meets it
     req2 = tailor.Requirements(company="Aries", title="Dev", must_have=["Go (Golang)", "SQL/NoSQL", "AWS/GCP/Azure", "Distributed systems"])
     assert tailor.skill_match(req2, "Go, PostgreSQL and SQL on AWS") == (["Go (Golang)", "SQL/NoSQL", "AWS/GCP/Azure"], ["Distributed systems"])
+
+
+# ── Tracking: a row tells its own story ──────────────────────────────────────────────────────────────
+def test_a_row_carries_everything_that_happened_in_order_and_what_is_next_on_the_cadences_own_day():
+    iso = lambda days: (NOW - timedelta(days=days)).isoformat()  # noqa: E731
+    app = _sent("application", 9, 1, sent_by="gravity", email={"kind": "application", "to": "hr@acme.com"},
+                follow_up_drafts=[{"n": 1, "at": iso(2), "text": "Hello again", "sent_at": iso(1), "edit_ratio": 0.2}])
+    assert [(e["what"], e["text"]) for e in stages.history(app)] == [
+        ("sent", "sent through Gravity after your approval, to hr@acme.com"),
+        ("follow_up_drafted", "follow-up 1 drafted in your mailbox"),
+        ("follow_up_sent", "follow-up 1 sent by you from your mailbox (a little edited)")]
+    # day 14 of the application cadence, which is the day `due` drafts follow-up 2
+    assert stages.next_step(app, NOW) == {"at": (NOW + timedelta(days=5)).date().isoformat(), "text": "follow-up 2 is drafted if nobody answers"}
+    assert stages.due({**app, "sent_at": iso(14)}, NOW) == "follow_up_2"
+    # a follow-up still in the mailbox is what is next; after both, the close day
+    waiting = {**app, "follow_up_drafts": [{"n": 1, "at": iso(2), "text": "Hello again"}]}
+    assert stages.next_step(waiting, NOW)["text"].startswith("follow-up 1 is drafted: send it")
+    assert stages.next_step({**app, "follow_ups": 2}, NOW) == {"at": (NOW + timedelta(days=12)).date().isoformat(), "text": "closed if nobody answers"}
+    # a reply: their words, then the drafted answer; an event with no stamp (an older record) comes last, undated
+    replied = {**app, "stage": "replied", "reply_kind": "interview", "replied_at": iso(0), "last_reply": "Can you do Friday?",
+               "reply_draft": {"text": "Friday works.", "at": iso(0)}}
+    assert [e["what"] for e in stages.history(replied)][-2:] == ["reply", "reply_drafted"]
+    assert stages.history(replied)[-2]["text"] == 'they replied: interview: "Can you do Friday?"'
+    assert stages.next_step(replied, NOW)["text"].startswith("your reply is drafted")
+    closed = {**app, "stage": "done", "reply_kind": "no_answer"}
+    assert stages.history(closed)[-1] == {"at": "", "what": "closed", "text": "closed: no answer in 21 days"}
+    assert stages.next_step(closed, NOW) is None
+    import agent
+    unsent = {"follow_up_drafts": [{"n": 2, "at": iso(8), "text": "Is the role still open?", "id": "d5"}]}
+    assert agent.latest_draft({**app, **unsent})["kind"] == "follow-up 2"
+    assert agent.latest_draft({**closed, **unsent}) is None      # closed: nothing is owed, so nothing is offered to send
+    # a form application: the day it was applied, and the one note on day 7
+    form = {"stage": "applied", "applied_on": (NOW - timedelta(days=3)).date().isoformat(), "follow_ups": 0}
+    assert stages.history(form) == [{"at": form["applied_on"], "what": "applied", "text": "you applied on the company's form"}]
+    assert stages.next_step(form, NOW)["at"] == (NOW + timedelta(days=4)).date().isoformat()
+    # a job not yet out has no story, and its row carries none
+    assert agent.tracking({"stage": "docs_ready"}, NOW) == {}
+    row = agent.tracking(app, NOW)
+    assert row["tracking"].splitlines()[0] == f"{agent.day(app['sent_at'])}: sent through Gravity after your approval, to hr@acme.com"
+    assert row["tracking"].splitlines()[-1] == f"Next, {agent.day(row['next']['at'])}: follow-up 2 is drafted if nobody answers"
+
+
+
+# ── Is the job real ─────────────────────────────────────────────────────────────────────────────────
+def test_a_job_reads_doubtful_on_hard_evidence_or_two_soft_ones_and_solid_only_on_a_positive_sign_with_no_doubt():
+    import trust
+    today, back = NOW.date(), lambda d: (NOW - timedelta(days=d)).date().isoformat()
+    job = {"title": "Backend Engineer", "verified": "verified_active", "posted": back(5)}
+    role = {"title": "Senior Backend Engineer, Payments", "first_seen_at": back(5)}
+    assert trust.reading(job, [role], [], today) == {"level": "solid", "why": [
+        "open on the employer's own page, read this run", "on the company's own list of 1 open roles"]}
+    # the board's date looks new, but the company has listed it for months: a re-post
+    repost = trust.reading(job, [{**role, "first_seen_at": back(120)}], [], today)
+    assert repost["level"] == "doubtful" and repost["why"][0].startswith("re-posted: first seen")
+    assert trust.reading({**job, "posted": back(100)}, [], [], today)["why"][0] == "posted 100 days ago"
+    # a long list without the role says more than a short one
+    others = [{"title": f"Designer {i}"} for i in range(5)]
+    assert trust.reading({"title": "Backend Engineer"}, others, [], today)["level"] == "doubtful"
+    assert trust.reading({"title": "Backend Engineer"}, others[:2], [], today)["level"] == "unknown"
+    # layoffs count only while recent
+    fresh, stale = {"title": "Acme lays off 200 staff", "found_at": back(30)}, {"title": "Acme lays off 200 staff", "found_at": back(400)}
+    assert trust.reading(job, [role], [fresh], today)["level"] == "doubtful"
+    assert trust.reading(job, [role], [stale], today)["level"] == "solid"
+    # nothing to go on is said as that, never as good news
+    assert trust.reading({"title": "Backend Engineer"}, [], [], today) == {"level": "unknown", "why": []}
+    assert trust.line({"level": "unknown", "why": []}) == "Not sure: nothing to go on"
+
+
+# ── Referrals ───────────────────────────────────────────────────────────────────────────────────────
+def test_what_two_people_share_is_read_from_both_records_and_only_from_their_history():
+    import referrals
+    from candidate import Education, Experience, Profile
+    p = Profile(education=[Education(institution="RV College of Engineering")], experiences=[Experience(company="Razorpay")])
+    assert referrals.common_ground(p, {"education": [{"school": {"name": "RV College of Engineering"}}]}) == "you both studied at RV College of Engineering"
+    assert referrals.common_ground(p, {"experience": [{"companyName": "Razorpay Software"}]}) == "you both worked at Razorpay"
+    assert referrals.common_ground(p, {"about": "I admire Razorpay", "posts": ["RV College of Engineering talk"]}) == ""
+    assert referrals.common_ground(Profile(experiences=[Experience(company="AB")]), {"experience": ["AB InBev"]}) == ""   # too short to mean it
+    who = referrals.people_in({"people": [{"id": "1", "first_name": "Priya", "last_name": "Nair", "title": "SRE", "linkedin_url": "https://l/p"}, {"title": "nameless"}]})
+    assert who == [{"id": "1", "name": "Priya Nair", "first": "Priya", "last": "Nair", "title": "SRE", "linkedin": "https://l/p"}]
+
+
+# ── Form answers ────────────────────────────────────────────────────────────────────────────────────
+def test_a_form_is_answered_from_the_persons_own_details_and_who_they_are_is_left_to_them():
+    import asyncio
+    import forms
+    assert forms.greenhouse_url("https://job-boards.greenhouse.io/acme/jobs/123") == "https://boards-api.greenhouse.io/v1/boards/acme/jobs/123?questions=true"
+    assert forms.greenhouse_url("https://jobs.lever.co/acme/1") is None
+    assert forms.greenhouse_questions('note {"questions": [{"label": "First Name"}, {"label": "Why us?"}]}') == ["First Name", "Why us?"]
+    assert forms.greenhouse_questions("<html>not json</html>") == []
+
+    class Model:
+        def with_structured_output(self, schema):
+            class Bound:
+                async def ainvoke(self, messages):
+                    return schema(answers=[forms.Answer(question="Why us?", answer="I cut p95 latency 40%."),
+                                           forms.Answer(question="Biggest win?", answer="I led a team of 50 at Google.")])
+            return Bound()
+    details = {"name": "Aditya Rao", "email": "a@rao.dev", "notice_days": 30}
+    asked = ["First Name", "Last Name", "Email", "Notice period?", "Current CTC?", "Resume/CV", "Gender", "Do you have a disability?", "Why us?", "Biggest win?", "I agree to the privacy policy"]
+    rows = asyncio.run(forms.answers(Model(), asked, details, "Cut p95 latency 40% on the payouts API", ""))
+    got = {r["q"]: (r["a"], r["how"]) for r in rows}
+    assert got["First Name"] == ("Aditya", forms.OURS) and got["Last Name"] == ("Rao", forms.OURS)
+    assert got["Notice period?"] == ("My notice period is 30 days.", forms.OURS)
+    assert got["Current CTC?"] == ("", forms.YOURS)                     # not given: not invented
+    assert got["Resume/CV"][1] == forms.OURS
+    assert got["Gender"] == ("", forms.YOURS) and got["Do you have a disability?"] == ("", forms.YOURS)
+    assert got["Why us?"] == ("I cut p95 latency 40%.", forms.DRAFTED)
+    assert got["Biggest win?"] == ("", forms.YOURS)                     # the model invented a team and an employer: handed back
+    assert "I agree to the privacy policy" not in got
+
+
+# ── After the interview, and what the record says to change ─────────────────────────────────────────
+def test_a_quiet_week_after_an_interview_owes_one_check_in_and_a_later_reply_cancels_it():
+    day_ago = lambda d: (NOW - timedelta(days=d)).date().isoformat()  # noqa: E731
+    app = {"stage": "replied", "reply_kind": "interview", "replied_at": day_ago(9), "interviews": [{"on": day_ago(6), "notes": "System design"}]}
+    assert stages.due(app, NOW) == "interview_nudge"
+    assert stages.due({**app, "interviews": [{"on": day_ago(4)}]}, NOW) is None
+    assert stages.due({**app, "replied_at": day_ago(1)}, NOW) is None
+    assert stages.due({**app, "interviews": [{"on": day_ago(6), "nudged": True}]}, NOW) is None
+    assert stages.next_step({**app, "interviews": [{"on": day_ago(1)}]}, NOW) == {"at": (NOW + timedelta(days=4)).date().isoformat(), "text": "a check-in is drafted if they go quiet"}
+    thanked = {**app, "thanks": {"text": "Thank you.", "at": day_ago(6)}}
+    assert stages.next_step(thanked, NOW)["text"].startswith("your thank-you is drafted")
+    assert [e["what"] for e in stages.history(thanked)] == ["reply", "interview", "thanks_drafted"]
+    assert stages.history(thanked)[1]["text"] == "interview: System design"
+
+
+def test_the_record_says_what_to_change_only_once_enough_went_out():
+    iso = (NOW - timedelta(days=9)).isoformat()
+    out = lambda **a: {"sent_at": iso, "stage": "sent", **a}  # noqa: E731
+    assert stages.advice([out()] * 4, NOW) == []
+    silent = [out(gaps=["Kubernetes"]) for _ in range(3)] + [out(gaps=["Kubernetes", "Kafka"]), out()]
+    lines = stages.advice(silent, NOW)
+    assert lines[0].startswith("5 applications out and nobody has answered")
+    assert lines[1] == "Kubernetes is missing on 4 of 5 postings you applied to: learn it and show it, or aim at roles without it."
+    assert not any("Kafka" in x for x in lines)                         # 1 of 5 is not a pattern
+    mixed = [out(email={"kind": "note"}, replied_at=iso) for _ in range(2)] + [out(email={"kind": "note"})] + [out(email={"kind": "application"}) for _ in range(3)]
+    assert any(x.startswith("Notes to a person get answered more (2 of 3)") for x in stages.advice(mixed, NOW))

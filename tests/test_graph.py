@@ -61,6 +61,10 @@ class FakeIo:
         web = self._tool(source)({"source": source})
         return await web(self.HIS[source], **args)
 
+    async def built_in(self, name, **args):
+        """Any read on Gravity's accounts: {} when the test set none up, as tooling.Gravity answers for one that is off."""
+        return (self.t[name](args) or {}) if name in self.t else {}
+
     async def find_email(self, first, last, domain):
         """The Hunter built-ins: {} when the test set none up (the manifest's built-ins off), else its answer."""
         if "hunter" not in self.t:
@@ -546,7 +550,7 @@ async def test_the_weekly_report_counts_by_stage_and_by_reply(wired):
     assert r["by_stage"] == {"emailed": 1, "replied: interview": 1, "closed": 1}
     assert r["by_email_kind"] == {"application": {"sent": 2, "replied": 2, "median_days_to_reply": 7},
                                   "note": {"sent": 1, "replied": 0, "median_days_to_reply": None}}
-    assert r["follow_ups"]["replies_after_one"] == 1 and "2 of 2 application emails (about 7 days to a reply)" in r["summary"]
+    assert r["follow_ups"]["replies_after_one"] == 1 and {"label": "Answered so far", "value": 2, "sub": "of 3, about 7 days to a reply"} in r["week"]
 
 
 async def test_a_status_update_from_the_ats_is_recorded_and_asks_nothing_of_you(wired):
@@ -622,8 +626,8 @@ async def test_every_result_tells_the_page_how_to_draw_its_table(wired):
     """`_layout` names the one table and draws each row as a card; the platform's page honours it, older pages ignore it."""
     wired(fu_tools(), {})
     out = await run({"memory": MEMORY, "inputs": {}, "actions": ["report"]})
-    [layout] = out["result"]["_layout"]
-    assert (layout["type"], layout["key"], layout["title"]) == ("cards", "applications", "company")
+    layout = out["result"]["_layout"][0]
+    assert (layout["type"], layout["key"], layout["title"], layout["lane"]) == ("board", "applications", "role", "lane")
     assert {s["key"] for s in layout["sections"]} <= set(agent.board({}, {"k": {"key": "k", "stage": "docs_ready", "order": "1"}})[0][0])
     out = await run({"memory": {}, "inputs": {"jobs": "https://acme.com/jobs/1"}})   # no resume: the early return
     assert out["result"]["_layout"] == agent.LAYOUT
@@ -743,7 +747,7 @@ async def test_the_weekly_report_counts_follow_ups_drafted_sent_and_unchanged(wi
             follow_up_drafts=[{"n": 1, "at": ago(2), "text": "z", "sent_at": ago(1), "edit_ratio": 0.3}])
     out = await run({"memory": MEMORY, "inputs": {}, "actions": ["report"]})
     assert out["result"]["follow_ups"] == {"drafted": 3, "sent_by_you": 2, "sent_unchanged": 1, "replies_after_one": 0}
-    assert "2 of 3 follow-up drafts sent" in out["result"]["summary"]
+    assert {"label": "Follow-ups sent", "value": 2, "sub": "of 3 drafted, 0 answered after one"} in out["result"]["week"]
 
 
 # ── discover: Sid's search inside this graph, through the seam ──────────────────────────────────────
@@ -909,3 +913,131 @@ async def test_no_memory_read_asks_for_more_rows_than_the_platform_answers(wired
     for action in ("report", "follow_ups", "check_replies"):
         await run({"inputs": {}, "memory": memory, "actions": [action]})
     assert asked and max(asked) <= 500
+
+
+# ── referrals, the morning search, after the interview, form answers, similar companies ──────────────
+NOTE = writer.Body(body="I am a backend engineer who built a reconciliation job in Go. You both studied at RV College of Engineering. "
+                        "Would you be open to referring me for the Backend Engineer role?")
+
+
+def refer_tools(**more):
+    return {"apollo.search_people": lambda a: {"people": [
+                {"id": "1", "name": "Sam Rao", "title": "Backend Engineer", "linkedin_url": "https://linkedin.com/in/sam"},
+                {"id": "2", "name": "Ira Sen", "title": "Backend Engineer", "linkedin_url": "https://linkedin.com/in/ira"}]},
+            "scrapecreators.linkedin_profile": lambda a: {"education": [{"school": "RV College of Engineering"}]} if "ira" in a["url"] else {"experience": []},
+            "apollo.enrich_person": lambda a: {"person": {"email": "ira@blacksmith.sh", "email_status": "verified"}} if a.get("id") == "2" else {"person": {"email": "email_not_unlocked@blacksmith.sh"}},
+            "gmail_draft": lambda a: {"id": f"d-{a['recipient_email']}"}, **more}
+
+
+def pick(action, row=1, **inputs):
+    return {"memory": {**MEMORY, "last_rows": ["a", "b"]}, "inputs": {}, "actions": [action], "action_inputs": {"rows": [str(row)], **inputs}}
+
+
+async def test_a_referral_is_found_with_the_shared_school_first_and_only_a_person_with_an_address_gets_a_draft(wired):
+    t, _ = wired(refer_tools(), {writer.Body: NOTE})
+    put_app("a", stage="docs_ready")
+    out = await run(pick("find_referral"))
+    row = out["result"]["applications"][0]
+    assert [(x["name"], x["common"], x["email"]) for x in row["people"]] == [
+        ("Ira Sen", "you both studied at RV College of Engineering", "ira@blacksmith.sh"), ("Sam Rao", "", "")]
+    # Sam's address is Apollo's locked placeholder: the note is there to paste, and nothing is drafted to nobody
+    assert row["people"][1]["note"] and "draft_id" not in row["people"][1]
+    assert [c["recipient_email"] for c in t["gmail_draft"].calls] == ["ira@blacksmith.sh"]
+    assert row["update"] == "2 found, 1 note drafted"
+    assert "Ira Sen, Backend Engineer (you both studied at RV College of Engineering): note drafted" in row["referrals"]
+
+
+async def test_a_referral_note_goes_once_on_approval_a_company_gets_one_a_week_and_their_answer_is_recorded(wired):
+    t, _ = wired(refer_tools(gmail_send_draft=lambda a: {"id": "m1", "threadId": "t9"}), {writer.Body: NOTE})
+    put_app("a", stage="docs_ready")
+    await run(pick("find_referral"))
+    coll = store.collection("people")
+    coll.put("a", {**coll.get("a"), "people": [{**x, "draft_id": f"d{i}", "email": "x@blacksmith.sh"} for i, x in enumerate(coll.get("a")["people"])]})
+    first = await run(pick("send_referral"))
+    assert first["result"]["applications"][0]["update"] == "note sent to Ira Sen"
+    again = await run(pick("send_referral"))
+    assert "give it a week" in again["result"]["applications"][0]["update"]
+    assert len(t["gmail_send_draft"].calls) == 1
+    # an answer in that thread reaches the person, and is not read as an application reply
+    wired(refer_tools(), {})
+    done = await run({"memory": MEMORY, "inputs": event({"thread_id": "t9", "from": "Ira <ira@blacksmith.sh>", "subject": "Re: Question", "text": "Happy to refer you."})})
+    assert done["result"]["needs_you"] == ['Blacksmith, Backend Engineer: Ira Sen answered your note: "Happy to refer you.".']
+    row = done["result"]["applications"][0]
+    assert row["stage"] == "ready: no address yet" and row["people"][0]["last_reply"] == "Happy to refer you."
+
+
+async def test_a_company_that_asked_not_to_be_contacted_gets_no_referral_note(wired):
+    t, _ = wired(refer_tools(), {writer.Body: NOTE})
+    put_app("a", stage="docs_ready")
+    store.collection("suppressed").put("blacksmith.sh", {"why": "opt_out"})
+    out = await run(pick("find_referral"))
+    assert out["result"]["applications"][0]["update"] == "they asked not to be contacted"
+    assert t["gmail_draft"].calls == []
+
+
+async def test_the_morning_search_needs_a_first_search_and_skips_when_jobs_are_piling_up(wired):
+    wired({}, {})
+    out = await run({"memory": MEMORY, "inputs": {}, "actions": ["daily_jobs"]})
+    assert out["result"]["summary"].startswith("Nothing searched: run Find jobs once")
+    for i in range(20):
+        store.collection("jobs").put(f"j{i}", {"key": f"j{i}", "picked": False, "company": "A", "title": "B", "order": str(i)})
+    out = await run({"memory": {**MEMORY, "scout": {"profile": {"skills": ["x"]}}}, "inputs": {}, "actions": ["daily_jobs"]})
+    assert out["result"]["summary"] == "Nothing searched: 20 found jobs are waiting for a look. Pick or drop some first."
+
+
+THANKS = writer.Body(body="Thank you for the conversation about the Backend Engineer role. I would like to continue.")
+
+
+async def test_an_interview_is_noted_a_thank_you_is_drafted_and_it_goes_from_the_row_on_approval(wired):
+    t, _ = wired({"gmail_draft": lambda a: {"id": "d7"}, "gmail_send_draft": lambda a: {"id": "m2", "threadId": "t1"}}, {writer.Body: THANKS})
+    put_app("a", stage="sent", thread="t1", sent_at=ago(9), email=NOTE_EMAIL, contact={"email": "priya@blacksmith.sh", "name": "Priya Nair"})
+    out = await run(pick("interview_done", interview_on=ago(0)[:10], notes="System design on the ledger"))
+    row = out["result"]["applications"][0]
+    assert row["stage"] == "replied: interview" and row["draft_kind"] == "thank-you" and row["update"] == "interview noted: thank-you drafted"
+    assert t["gmail_draft"].calls[0]["thread_id"] == "t1" and t["gmail_draft"].calls[0]["recipient_email"] == "priya@blacksmith.sh"
+    assert [e["what"] for e in row["history"]] == ["sent", "reply", "interview", "thanks_drafted"]
+    sent = await run(pick("send_draft"))
+    assert sent["result"]["applications"][0]["update"] == "thank-you sent" and t["gmail_send_draft"].calls == [{"draft_id": "d7"}]
+
+
+async def test_a_quiet_week_after_the_interview_drafts_one_check_in(wired):
+    t, _ = wired(fu_tools(), {writer.Body: FOLLOW})
+    put_app("a", stage="replied", reply_kind="interview", thread="t1", sent_at=ago(20), replied_at=ago(12), last_from="priya@blacksmith.sh",
+            email=NOTE_EMAIL, interviews=[{"on": ago(6)[:10], "notes": ""}])
+    out = await run({"memory": MEMORY, "inputs": {}, "actions": ["follow_ups"]})
+    row = out["result"]["applications"][0]
+    assert row["draft_kind"] == "the check-in after the interview" and t["gmail_draft"].calls[0]["recipient_email"] == "priya@blacksmith.sh"
+    await run({"memory": MEMORY, "inputs": {}, "actions": ["follow_ups"]})
+    assert len(t["gmail_draft"].calls) == 1                             # one check-in, however many mornings pass
+
+
+async def test_form_answers_read_the_greenhouse_form_and_rest_on_the_row(wired):
+    form = json.dumps({"questions": [{"label": "First Name"}, {"label": "Gender"}]})
+    wired({"web_fetch": lambda a: {"results": [{"text": form}]}}, {})
+    put_app("a", stage="docs_ready", apply_url="https://job-boards.greenhouse.io/blacksmith/jobs/4321")
+    out = await run(pick("form_answers"))
+    row = out["result"]["applications"][0]
+    assert row["update"] == "1 of 2 form questions answered"
+    assert row["form"] == [{"q": "First Name", "a": "Aditya", "how": "from your details"}, {"q": "Gender", "a": "", "how": "yours to answer"}]
+
+
+async def test_similar_companies_add_matching_open_roles_to_the_board_each_with_its_check(wired):
+    fake = {"predictleads.similar_companies": lambda a: {"data": [{"attributes": {"domain": "nimbus.io", "company_name": "Nimbus"}}]},
+            "predictleads.company_data": lambda a: {"data": [
+                {"attributes": {"title": "Senior Backend Engineer", "url": "https://nimbus.io/jobs/1", "first_seen_at": ago(3)}},
+                {"attributes": {"title": "Sales Lead", "url": "https://nimbus.io/jobs/2"}}]} if a["dataset"] == "job_openings" else {}}
+    wired(fake, {})
+    put_app("a", stage="docs_ready")
+    out = await run(pick("similar_jobs"))
+    rows = {r["company"]: r for r in out["result"]["applications"]}
+    assert set(rows) == {"Blacksmith", "Nimbus"} and rows["Nimbus"]["stage"] == "found" and rows["Nimbus"]["role"] == "Senior Backend Engineer"
+    assert rows["Blacksmith"]["update"] == "1 open role found at similar companies"
+    assert rows["Nimbus"]["trust_level"] == "unknown" and "on the company's own list of 2 open roles" in rows["Nimbus"]["trust_line"]
+
+
+async def test_the_weekly_report_says_what_to_change(wired):
+    wired(fu_tools(), {})
+    for i in range(5):
+        put_app(f"k{i}", company=f"Co{i}", domain=f"co{i}.io", stage="sent", sent_at=ago(9), gaps=["Kubernetes"], email={"kind": "application", "to": "x@y.io"})
+    out = await run({"memory": MEMORY, "inputs": {}, "actions": ["report"]})
+    assert out["result"]["advice"][0].startswith("5 applications out and nobody has answered")

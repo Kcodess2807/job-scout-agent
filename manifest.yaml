@@ -1,6 +1,6 @@
 contract: v2
 name: applyzer
-version: 0.7.5
+version: 0.8.0
 description: "Finds live jobs that fit your resume, or takes the ones you paste. Tailors your resume and cover letter to each job from your own facts only and sends the application when you approve it, to a recruiter it finds on the company's own pages. Tracks replies in your inbox: drafts your answers, follows up when nobody writes back, and reports each week which emails get answered."
 
 kind: interactive
@@ -93,7 +93,15 @@ models:
   tier: standard
 
 # Gravity's own lookups (no app of the person's): a found person's work address, checked before it is used
-built_ins: [hunter.find_email, hunter.verify_email]
+# and what is known about companies and the people at them: all reads, none of them the person's account
+built_ins:
+  - hunter.find_email
+  - hunter.verify_email
+  - apollo.search_people
+  - apollo.enrich_person
+  - scrapecreators.linkedin_profile
+  - predictleads.company_data
+  - predictleads.similar_companies
 
 sources:
   mail:
@@ -142,9 +150,34 @@ actions:
     default: true
   - name: discover
     label: "Find jobs for me"
+  - name: daily_jobs
+    label: "New jobs every morning"
+    schedule: { cron: "30 8 * * *", consumer_can_change: true }
   - name: pick
     label: "Prepare this one"
     per_row: true
+  - name: similar_jobs
+    label: "Similar companies"
+    per_row: true
+  - name: find_referral
+    label: "Find a referral"
+    per_row: true
+  - name: send_referral
+    label: "Send the note"
+    per_row: true
+  - name: form_answers
+    label: "Answer the form"
+    per_row: true
+  - name: interview_done
+    label: "I interviewed"
+    per_row: true
+    inputs:
+      - name: interview_on
+        type: date
+        label: "When was it? (blank: today)"
+      - name: notes
+        type: textarea
+        label: "What they asked and how it went (optional)"
   - name: paste_posting
     label: "Paste the posting"
     per_row: true
@@ -196,6 +229,7 @@ memory:
     applications: { per: user, keep_days: 365, max_items: 5000, max_item_kb: 64 }
     declined: { per: user, keep_days: 365, max_items: 5000, max_item_kb: 1 }
     suppressed: { per: user, keep_days: 730, max_items: 5000, max_item_kb: 1 }
+    people: { per: user, keep_days: 365, max_items: 1000, max_item_kb: 16 }
 
 resources:
   memory_mb: 1024

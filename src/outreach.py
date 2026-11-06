@@ -95,11 +95,12 @@ TONES = {1: "polite and professional, expressing continued interest without bein
 
 
 async def follow_up(model, n: int, p: Profile, company: str, role: str, days: int, source: str,
-                    own: list[str], applied: bool = False, earlier: str = "") -> tuple[str, list[str]]:
+                    own: list[str], applied: bool = False, earlier: str = "", interviewed: bool = False) -> tuple[str, list[str]]:
     """(the follow-up body, what is still wrong with it after one rewrite). `applied`: the candidate applied
     through the company's form and has not emailed before, so this is their first email, not a reminder. `earlier`:
     what was already written to them, so the follow-up adds something instead of repeating it."""
-    context = (f"The candidate applied through the company's form {days} days ago and has not emailed before; this is "
+    context = (f"The candidate interviewed {days} days ago and has heard nothing since; ask for an update on the next step." if interviewed
+               else f"The candidate applied through the company's form {days} days ago and has not emailed before; this is "
                "their first email, following up on that application." if applied
                else f"This is the first follow-up after {days} days of no response." if n == 1
                else f"This is follow-up #{n} after {days} days since the first email.")
@@ -113,6 +114,26 @@ async def follow_up(model, n: int, p: Profile, company: str, role: str, days: in
         if got is None:
             return "", ["the model call failed"]
         problems = writer.email_checks(got.body.strip(), source, f"{company} {role}", "note", own)
+        if not problems:
+            break
+    return got.body.strip(), problems
+
+
+THANKS_SYSTEM = ("You write a short thank-you from a job candidate after an interview. Two or three plain sentences, under 90 "
+                 "words: thank them, name one thing from the conversation when notes are given, and say they would like to "
+                 "continue. No greeting, no signature, plain text, no flattery, no exclamation marks. Never a number, employer "
+                 "or tool the resume or the notes do not show. " + writer.DATA_NOTE)
+
+
+async def thank_you(model, p: Profile, company: str, role: str, notes: str, source: str, own: list[str]) -> tuple[str, list[str]]:
+    """(the thank-you's body, what is still wrong with it after one rewrite). `notes`: the person's own words on how it went."""
+    base = f"Job Title: {role}\nCompany: {company}\nApplicant Name: {p.full_name}\nNOTES ON THE INTERVIEW: {notes or 'none given'}\nRESUME:\n{source[:6000]}"
+    problems: list[str] = []
+    for _ in range(2):
+        got = await structured(model, writer.Body, THANKS_SYSTEM, base + (f"\nFIX THESE IN THE LAST DRAFT: {'; '.join(problems)}" if problems else ""))
+        if got is None:
+            return "", ["the model call failed"]
+        problems = writer.email_checks(got.body.strip(), source, f"{company} {role} {notes}", "thanks", own)
         if not problems:
             break
     return got.body.strip(), problems
